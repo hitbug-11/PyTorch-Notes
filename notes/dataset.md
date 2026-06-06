@@ -13,13 +13,14 @@
 
 上图可以理解为：磁盘数据先由 `Dataset` 读取并预处理，`DataLoader` 再多次调用 `Dataset.__getitem__`，把单个样本组装成 `Batch Data`，最后送入模型。采样规则体现在传入 `__getitem__` 的索引中，后续可以通过 `DataLoader` 的 `shuffle` 或 `sampler` 控制随机采样、均衡采样、有偏采样等策略。
 
-本节用 COVID-19 X 光分类数据集说明三种典型数据组织方式：
+本节先用 COVID-19 X 光分类数据集说明三种典型的“图片路径 + 标签”组织方式，再补充一种常见的数组打包方式 `.npz`：
 
 - 数据划分和标签写在 `txt` 文件中。
 - 数据划分和标签通过文件夹结构体现。
 - 数据划分和标签写在 `csv` 文件中。
+- 图像和标签提前打包在 `.npz` 文件中。
 
-三种方式的共同目标都是构建 `self.img_info` 这样的列表：
+前三种方式的共同目标都是构建 `self.img_info` 这样的列表：
 
 ```python
 self.img_info = [
@@ -32,7 +33,7 @@ self.img_info = [
 
 ## Dataset 的通用模板
 
-三个案例的主体结构基本一致，差异主要集中在 `_get_img_info()` 如何收集图片路径和标签。
+前三个案例的主体结构基本一致，差异主要集中在 `_get_img_info()` 如何收集图片路径和标签。`.npz` 方式则通常不需要维护路径列表，而是直接维护数组。
 
 ```python
 from torch.utils.data import Dataset
@@ -354,21 +355,111 @@ for i, (inputs, target) in enumerate(train_loader):
 
 这里 `inputs` 的形状通常是 `[B, 1, 4, 4]`，`target` 的形状通常是 `[B]`。`B` 由 `batch_size` 决定。
 
-## 三种 Dataset 组织方式的关键差异
+## 案例四：数据和标签在 npz 中
+
+`.npz` 是 NumPy 提供的压缩打包格式，可以把多个数组存到同一个文件中。对于已经预处理好的小型或中型数据集，可以把图像数组和标签数组分别保存为 `images`、`labels`，再由 `Dataset` 按索引读取。
+
+这种方式和前三种有一个关键区别：前三种通常在 `__getitem__` 中根据路径从磁盘读取图片；`.npz` 通常在初始化时读取数组，然后在 `__getitem__` 中直接按下标取数组。
+
+### 数据集目录结构
+
+```text
+covid-19-npz/
+├── train.npz
+└── valid.npz
+```
+
+`train.npz` 内部可以包含：
+
+```text
+images: [N, H, W] 或 [N, C, H, W]
+labels: [N]
+```
+
+其中：
+
+- `N` 表示样本数量。
+- `H, W` 表示图像高度和宽度。
+- `C` 表示通道数。灰度图通常是 `1`，RGB 图通常是 `3`。
+- `labels` 中的每个元素是对应样本的整数标签。
+
+### Dataset 核心代码
+
+```python
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+
+
+class COVID19NPZDataset(Dataset):
+    def __init__(self, path_npz, transform=None):
+        self.path_npz = path_npz
+        self.transform = transform
+
+        data = np.load(self.path_npz)
+        self.images = data["images"]
+        self.labels = data["labels"]
+        if len(self.images) != len(self.labels):
+            raise ValueError("images and labels must have the same length")
+
+    def __getitem__(self, index):
+        image = self.images[index]
+        label = int(self.labels[index])
+
+        image = torch.as_tensor(image, dtype=torch.float32)
+
+        if image.ndim == 2:
+            image = image.unsqueeze(0)
+
+        if image.max().item() > 1:
+            image = image / 255.0
+
+        if self.transform is not None:
+            image = self.transform(image)
+
+        return image, label
+
+    def __len__(self):
+        return len(self.labels)
+```
+
+使用方式：
+
+```python
+from torch.utils.data import DataLoader
+
+train_set = COVID19NPZDataset("covid-19-npz/train.npz")
+valid_set = COVID19NPZDataset("covid-19-npz/valid.npz")
+
+train_loader = DataLoader(dataset=train_set, batch_size=32, shuffle=True)
+```
+
+如果 `images` 的形状是 `[N, H, W]`，单个样本取出后是 `[H, W]`，代码中会用 `unsqueeze(0)` 补成 `[1, H, W]`。如果 `images` 本来就是 `[N, C, H, W]`，取出的单个样本已经是 `[C, H, W]`，不需要再补通道维度。
+
+### 适用场景与注意点
+
+- 适合数据已经提前预处理成数组的情况，例如医学影像切片、表格特征、仿真数据、较小的图像数据集。
+- 目录结构简单，训练集和验证集可以分别保存为 `train.npz`、`valid.npz`。
+- 读取逻辑比图片路径方式更短，不需要 `PIL.Image.open()`。
+- 如果 `.npz` 文件很大，初始化时一次性加载数组可能占用较多内存。超大数据集更适合使用 HDF5、LMDB，或继续使用路径索引方式按需读取。
+- `torchvision.transforms` 中有些变换面向 PIL 图像，有些可以直接处理 Tensor。使用 `.npz` 时要确认 `transform` 的输入类型是否匹配。
+
+## 四种 Dataset 组织方式的关键差异
 
 | 组织方式 | 数据划分在哪里 | 标签在哪里 | 构造 Dataset 时需要什么 | `_get_img_info()` 的核心逻辑 | 适合场景 |
 | --- | --- | --- | --- | --- | --- |
 | `txt` 文件 | `train.txt`、`valid.txt` | `txt` 每行的指定列 | 图片根目录、对应 `txt` 路径 | 逐行读取 `txt`，解析相对路径和标签 | 划分固定、标注文件简单 |
 | 文件夹 | `train/`、`valid/` 目录 | 类别子目录名 | 当前划分的根目录 | 遍历目录，用父目录名映射标签 | 图像分类目录已整理好 |
 | `csv` 文件 | `set-type` 字段 | `label` 字段 | 图片根目录、`csv` 路径、`mode` | 读取表格，按 `mode` 过滤，再解析图片名和标签 | 元信息较多、划分灵活 |
+| `.npz` 文件 | 通常由 `train.npz`、`valid.npz` 区分 | `labels` 数组 | `.npz` 文件路径 | 通常不需要 `_get_img_info()`，直接读取 `images` 和 `labels` 数组 | 数据已预处理成数组 |
 
-从代码结构看，三种方式的 `__getitem__` 和 `__len__` 基本相同，真正变化的是“如何从磁盘结构或标注文件中建立 `img_info`”。因此写自定义 `Dataset` 时，可以先想清楚三个问题：
+从代码结构看，`txt`、文件夹、`csv` 三种方式的 `__getitem__` 和 `__len__` 基本相同，真正变化的是“如何从磁盘结构或标注文件中建立 `img_info`”。`.npz` 方式则把样本提前整理成数组，变化点是“如何从数组中取出单个样本”。因此写自定义 `Dataset` 时，可以先想清楚三个问题：
 
 - 每个样本的图片路径从哪里来？
 - 每个样本的标签从哪里来？
 - 训练集、验证集、测试集的划分从哪里来？
 
-只要这三个问题明确，就可以把数据整理成 `(path_img, label)` 列表，再交给统一的 `__getitem__` 读取。
+只要这三个问题明确，就可以选择合适的数据组织方式：路径型数据通常整理成 `(path_img, label)` 列表，数组型数据通常直接保存为 `images` 和 `labels`。
 
 ## 常见错误
 
@@ -378,3 +469,5 @@ for i, (inputs, target) in enumerate(train_loader):
 - 图片后缀不匹配：如果代码只判断 `.png` 和 `.jpeg`，数据里的 `.jpg` 不会被加入数据集。
 - 没有使用 `transform`：如果直接返回 `PIL.Image.Image`，模型不能直接训练；通常至少需要 `transforms.ToTensor()`。
 - 数据集长度为 0：大概率是路径、文件名、后缀、划分字段或过滤条件不匹配。
+- `.npz` 维度不符合模型输入：例如灰度图保存为 `[N, H, W]` 时，要在 `__getitem__` 中补成 `[1, H, W]`。
+- `.npz` 数值范围不合适：如果图像数组是 `uint8` 的 `0-255`，通常要转成 `float32` 并缩放到 `0-1`。
