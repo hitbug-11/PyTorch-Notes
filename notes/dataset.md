@@ -13,14 +13,15 @@
 
 上图可以理解为：磁盘数据先由 `Dataset` 读取并预处理，`DataLoader` 再多次调用 `Dataset.__getitem__`，把单个样本组装成 `Batch Data`，最后送入模型。采样规则体现在传入 `__getitem__` 的索引中，后续可以通过 `DataLoader` 的 `shuffle` 或 `sampler` 控制随机采样、均衡采样、有偏采样等策略。
 
-本节先用 COVID-19 X 光分类数据集说明三种典型的“图片路径 + 标签”组织方式，再补充一种常见的数组打包方式 `.npz`：
+本节先用 COVID-19 X 光分类数据集说明三种典型的“图片路径 + 标签”组织方式，再补充两种重要方式：`ImageFolder` 官方封装和数组打包格式 `.npz`。
 
 - 数据划分和标签写在 `txt` 文件中。
 - 数据划分和标签通过文件夹结构体现。
 - 数据划分和标签写在 `csv` 文件中。
+- 使用 `torchvision.datasets.ImageFolder` 直接读取分类目录。
 - 图像和标签提前打包在 `.npz` 文件中。
 
-前三种方式的共同目标都是构建 `self.img_info` 这样的列表：
+`txt`、文件夹、`csv` 这三种手写 Dataset 的共同目标都是构建 `self.img_info` 这样的列表：
 
 ```python
 self.img_info = [
@@ -254,6 +255,125 @@ valid_set = COVID19Dataset_2(root_dir_valid)
 
 这种方式的优点是直观，不需要额外标注文件；缺点是数据划分和标签绑定在目录结构中，调整训练集、验证集时要移动文件或重新组织目录。
 
+## 重要方式：ImageFolder，以 ImageNet 为例
+
+`torchvision.datasets.ImageFolder` 是图像分类任务中非常常用的现成 `Dataset`。它要求数据按“类别文件夹”组织：每个类别一个子目录，目录名就是类别名，目录下存放该类别的图片。`ImageFolder` 会自动遍历目录、收集图片路径，并把类别目录名映射成整数标签。
+
+它和前面的 `COVID19Dataset_2` 思路一致，但不需要自己写 `os.walk()`、`str_2_int` 和 `_get_img_info()`。
+
+### ImageNet 风格目录结构
+
+ImageNet 常见的分类训练目录会按 WordNet ID 组织类别，例如：
+
+```text
+imagenet/
+├── train/
+│   ├── n01440764/
+│   │   ├── n01440764_18.JPEG
+│   │   └── n01440764_36.JPEG
+│   ├── n01443537/
+│   │   ├── n01443537_2.JPEG
+│   │   └── n01443537_14.JPEG
+│   └── ...
+└── val/
+    ├── n01440764/
+    │   └── ILSVRC2012_val_00000293.JPEG
+    ├── n01443537/
+    │   └── ILSVRC2012_val_00002138.JPEG
+    └── ...
+```
+
+这里：
+
+- `train/`、`val/` 表示数据划分。
+- `n01440764/`、`n01443537/` 等子目录表示类别。
+- 每个类别目录中的图片都会被赋予同一个标签。
+- `ImageFolder(root="imagenet/train")` 只读取训练集，`ImageFolder(root="imagenet/val")` 只读取验证集。
+
+需要注意，原始 ImageNet 验证集有时是所有图片平铺在一个目录下，再由单独标注文件给出标签。若要直接使用 `ImageFolder` 读取验证集，需要先把验证图片整理成上面的类别子目录形式；否则应使用专门的 ImageNet 数据集类或自定义 `Dataset`。
+
+### ImageFolder 核心用法
+
+```python
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+
+
+train_transform = transforms.Compose([
+    transforms.RandomResizedCrop(224),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225],
+    ),
+])
+
+valid_transform = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225],
+    ),
+])
+
+train_set = datasets.ImageFolder(
+    root="imagenet/train",
+    transform=train_transform,
+)
+valid_set = datasets.ImageFolder(
+    root="imagenet/val",
+    transform=valid_transform,
+)
+
+train_loader = DataLoader(
+    dataset=train_set,
+    batch_size=64,
+    shuffle=True,
+    num_workers=4,
+)
+valid_loader = DataLoader(
+    dataset=valid_set,
+    batch_size=64,
+    shuffle=False,
+    num_workers=4,
+)
+```
+
+### 标签映射与样本信息
+
+`ImageFolder` 会根据类别目录名自动生成标签映射：
+
+```python
+print(train_set.classes)
+print(train_set.class_to_idx)
+print(train_set.samples[:3])
+```
+
+可能输出：
+
+```python
+["n01440764", "n01443537", ...]
+{"n01440764": 0, "n01443537": 1, ...}
+[
+    ("imagenet/train/n01440764/n01440764_18.JPEG", 0),
+    ("imagenet/train/n01440764/n01440764_36.JPEG", 0),
+    ("imagenet/train/n01443537/n01443537_2.JPEG", 1),
+]
+```
+
+`classes` 是类别目录名列表，`class_to_idx` 是类别名到整数标签的映射，`samples` 是 `(图片路径, 标签)` 列表。可以把它理解为 `ImageFolder` 已经帮我们自动构建好了前面手写 Dataset 中的 `img_info`。
+
+### 适用场景与注意点
+
+- 适合标准图像分类任务，尤其是数据已经按类别目录整理好的情况。
+- 训练集、验证集通常分别构造一个 `ImageFolder`，例如 `root="imagenet/train"` 和 `root="imagenet/val"`。
+- 类别标签由目录名排序后自动生成，不一定等于外部标注文件中的原始类别编号。需要和官方类别编号严格对齐时，要检查 `class_to_idx`。
+- 不适合直接处理目标检测、语义分割、多标签分类等任务，因为这些任务的一个样本通常不只是“图片 + 单个类别标签”。
+- 如果目录里存在损坏图片或不希望读取的文件，可以通过 `is_valid_file` 过滤。
+
 ## 案例三：数据划分及标签在 csv 中
 
 这种方式把所有图片放在一个目录中，用一份 `csv` 同时记录图片名、标签和所属划分。代码来自 `PyTorch-Tutorial-2nd-1.0.0/code/chapter-3/01_dataset.py` 中的 `COVID19Dataset_3`。
@@ -444,16 +564,17 @@ train_loader = DataLoader(dataset=train_set, batch_size=32, shuffle=True)
 - 如果 `.npz` 文件很大，初始化时一次性加载数组可能占用较多内存。超大数据集更适合使用 HDF5、LMDB，或继续使用路径索引方式按需读取。
 - `torchvision.transforms` 中有些变换面向 PIL 图像，有些可以直接处理 Tensor。使用 `.npz` 时要确认 `transform` 的输入类型是否匹配。
 
-## 四种 Dataset 组织方式的关键差异
+## 常见 Dataset 组织与载入方式的关键差异
 
 | 组织方式 | 数据划分在哪里 | 标签在哪里 | 构造 Dataset 时需要什么 | `_get_img_info()` 的核心逻辑 | 适合场景 |
 | --- | --- | --- | --- | --- | --- |
 | `txt` 文件 | `train.txt`、`valid.txt` | `txt` 每行的指定列 | 图片根目录、对应 `txt` 路径 | 逐行读取 `txt`，解析相对路径和标签 | 划分固定、标注文件简单 |
 | 文件夹 | `train/`、`valid/` 目录 | 类别子目录名 | 当前划分的根目录 | 遍历目录，用父目录名映射标签 | 图像分类目录已整理好 |
+| `ImageFolder` | 通常由 `train/`、`val/` 区分 | 类别子目录名 | 当前划分的根目录、`transform` | 官方自动遍历目录并生成 `samples`、`class_to_idx` | 标准图像分类，如 ImageNet |
 | `csv` 文件 | `set-type` 字段 | `label` 字段 | 图片根目录、`csv` 路径、`mode` | 读取表格，按 `mode` 过滤，再解析图片名和标签 | 元信息较多、划分灵活 |
 | `.npz` 文件 | 通常由 `train.npz`、`valid.npz` 区分 | `labels` 数组 | `.npz` 文件路径 | 通常不需要 `_get_img_info()`，直接读取 `images` 和 `labels` 数组 | 数据已预处理成数组 |
 
-从代码结构看，`txt`、文件夹、`csv` 三种方式的 `__getitem__` 和 `__len__` 基本相同，真正变化的是“如何从磁盘结构或标注文件中建立 `img_info`”。`.npz` 方式则把样本提前整理成数组，变化点是“如何从数组中取出单个样本”。因此写自定义 `Dataset` 时，可以先想清楚三个问题：
+从代码结构看，`txt`、文件夹、`csv` 三种方式的 `__getitem__` 和 `__len__` 基本相同，真正变化的是“如何从磁盘结构或标注文件中建立 `img_info`”。`ImageFolder` 是文件夹方式的官方封装，适合直接复用。`.npz` 方式则把样本提前整理成数组，变化点是“如何从数组中取出单个样本”。因此写自定义 `Dataset` 时，可以先想清楚三个问题：
 
 - 每个样本的图片路径从哪里来？
 - 每个样本的标签从哪里来？
@@ -466,6 +587,8 @@ train_loader = DataLoader(dataset=train_set, batch_size=32, shuffle=True)
 - 路径传错：例如 `txt` 方式中 `root_dir` 应该指向 `imgs/`，如果传成数据集总目录，拼出来的图片路径会多一层或少一层。
 - 标签列读错：`i.split()[2]` 表示读取第 3 列，必须和标注文件格式一致。
 - 类别映射漏写：文件夹方式中，目录名必须能在 `str_2_int` 字典里找到。
+- `ImageFolder` 标签顺序误解：标签由类别目录名排序后生成，训练前应检查 `class_to_idx`。
+- `ImageFolder` 验证集目录不符合要求：如果验证图片没有按类别放入子目录，不能直接按分类标签读取。
 - 图片后缀不匹配：如果代码只判断 `.png` 和 `.jpeg`，数据里的 `.jpg` 不会被加入数据集。
 - 没有使用 `transform`：如果直接返回 `PIL.Image.Image`，模型不能直接训练；通常至少需要 `transforms.ToTensor()`。
 - 数据集长度为 0：大概率是路径、文件名、后缀、划分字段或过滤条件不匹配。
