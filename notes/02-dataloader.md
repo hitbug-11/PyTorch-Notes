@@ -436,6 +436,120 @@ inputs = inputs.to(device, non_blocking=True)
 
 通常可以让数据从 CPU 拷贝到 GPU 更高效。
 
+## 数据存储与转移过程
+
+`DataLoader` 本身不会默认把整个数据集一次性读入内存。数据什么时候进入内存，主要取决于 `Dataset` 的实现方式。常见 Dataset 可以分成两类：路径型 Dataset 和数组型 Dataset。
+
+### 路径型 Dataset
+
+路径型 Dataset 的特点是：`Dataset.__init__` 中通常只保存图片路径、标签和元信息，真正的图像内容仍然保存在磁盘上。只有当 DataLoader 迭代到包含该样本的 batch 时，才会调用 `Dataset.__getitem__` 读取图片。
+
+第一篇中的 `txt`、`csv`、文件夹方式、`ImageFolder` 都属于这一类。典型写法如下：
+
+```python
+class ImageDataset(Dataset):
+    def __init__(self, root_dir, transform=None):
+        self.root_dir = root_dir
+        self.transform = transform
+        self.img_info = []
+        self._get_img_info()  # 只保存路径和标签
+
+    def __getitem__(self, index):
+        path_img, label = self.img_info[index]
+        img = Image.open(path_img)  # 迭代到这个样本时才从磁盘读取
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+        return img, label
+```
+
+这种方式的数据流如下：
+
+```text
+磁盘图片
+    -> Dataset.__init__ 只保存图片路径和标签
+    -> DataLoader 采样得到 index
+    -> Dataset.__getitem__(index) 从磁盘读取图片
+    -> transform 转成 Tensor
+    -> collate_fn 合并成 CPU batch
+    -> 训练循环中 .to(device) 转移到 GPU
+    -> 输入模型
+```
+
+因此，路径型 Dataset 通常是“用到哪个 batch，才读取哪个 batch”。优点是节省内存，适合图片很多、数据量较大的情况；缺点是训练时需要不断从磁盘读取和解码图片，速度受磁盘、图片格式、预处理和 `num_workers` 影响。
+
+### 数组型 Dataset
+
+数组型 Dataset 的特点是：数据已经提前整理成数组或 Tensor，`Dataset.__init__` 中可能会把数组直接加载到内存中。第一篇中的 `.npz`、`.npy`、`TensorDataset` 更接近这一类。
+
+典型写法如下：
+
+```python
+class NPZDataset(Dataset):
+    def __init__(self, path_npz):
+        data = np.load(path_npz)
+        self.images = data["images"]
+        self.labels = data["labels"]
+
+    def __getitem__(self, index):
+        image = torch.as_tensor(self.images[index], dtype=torch.float32)
+        label = int(self.labels[index])
+        return image, label
+```
+
+这种方式的数据流如下：
+
+```text
+.npz / .npy 文件
+    -> Dataset.__init__ 读取 images 和 labels 数组
+    -> 数组保存在 CPU 内存中
+    -> DataLoader 采样得到 index
+    -> Dataset.__getitem__(index) 从内存数组取出样本
+    -> collate_fn 合并成 CPU batch
+    -> 训练循环中 .to(device) 转移到 GPU
+    -> 输入模型
+```
+
+数组型 Dataset 的优点是读取样本时不需要反复打开图片文件，通常速度更快；缺点是如果数组很大，初始化时会占用较多内存。数据量较大时，可以考虑继续使用路径型 Dataset，或者使用支持按需读取的大文件格式，例如 HDF5、LMDB。
+
+### CPU 内存、pin memory 与 GPU 显存
+
+无论是路径型还是数组型，DataLoader 默认返回的 batch 都在 CPU 内存中，不会自动进入 GPU 显存。真正把数据转移到 GPU 的步骤通常写在训练循环中：
+
+```python
+for inputs, targets in train_loader:
+    inputs = inputs.to(device)
+    targets = targets.to(device)
+```
+
+如果打开 `pin_memory=True`，DataLoader 会尽量把 CPU batch Tensor 放入页锁定内存：
+
+```python
+train_loader = DataLoader(
+    dataset=train_set,
+    batch_size=32,
+    shuffle=True,
+    pin_memory=True,
+)
+```
+
+这仍然是 CPU 内存，不是 GPU 显存。它的作用是让后续 CPU 到 GPU 的拷贝更高效，通常配合下面的写法：
+
+```python
+inputs = inputs.to(device, non_blocking=True)
+targets = targets.to(device, non_blocking=True)
+```
+
+### 两类 Dataset 的对比
+
+| 类型 | 初始化时保存什么 | 迭代到 batch 时做什么 | 内存占用 | 典型例子 |
+| --- | --- | --- | --- | --- |
+| 路径型 Dataset | 图片路径、标签、元信息 | 从磁盘读取图片并预处理 | 较低 | `txt`、`csv`、文件夹、`ImageFolder` |
+| 数组型 Dataset | 图像数组、标签数组或 Tensor | 从内存数组中取样本 | 可能较高 | `.npz`、`.npy`、`TensorDataset` |
+
+可以记住一句话：DataLoader 负责“按规则取样并组 batch”，但数据是提前在内存中，还是迭代到 batch 时才从磁盘读取，主要由 Dataset 的代码决定。
+
 ## 常见错误
 
 - 同时设置 `shuffle=True` 和 `sampler`：二者都控制采样顺序，通常不能同时使用。
@@ -443,4 +557,5 @@ inputs = inputs.to(device, non_blocking=True)
 - `num_workers` 设置过大：可能导致内存占用增大、数据读取反而变慢。
 - 自定义 `collate_fn` 返回结构不符合训练代码预期：训练循环中的解包方式要和 `collate_fn` 输出一致。
 - 使用 GPU 训练时只设置 `pin_memory=True`，但没有使用 `.to(device)`：pin memory 只是加速 CPU 到 GPU 的拷贝，不能自动把数据放到 GPU。
+- 误以为 DataLoader 会自动把所有数据读进内存：通常是否提前加载由 Dataset 的 `__init__` 和 `__getitem__` 决定。
 - 迭代式 Dataset 多 worker 读取时没有做数据切分：不同 worker 可能重复读取同一批数据。
