@@ -211,6 +211,120 @@ Tensor:    C x H x W
 
 这一步非常关键，因为 PyTorch 模型通常接收 Tensor，而不是 PIL 图像。
 
+更准确地说，NumPy 中的图像通常是 `numpy.ndarray`，PyTorch 中模型计算使用的是 `torch.Tensor`。二者都能表示多维数组，但定位不同：
+
+| 对比点 | `numpy.ndarray` | `torch.Tensor` |
+| --- | --- | --- |
+| 所属库 | NumPy | PyTorch |
+| 主要用途 | 通用数值计算、图像读取和预处理 | 深度学习训练、模型前向传播、反向传播 |
+| 常见图像维度 | `H x W x C` | `C x H x W` |
+| GPU 支持 | 默认在 CPU 上 | 支持 CPU / GPU |
+| 自动求导 | 不支持 PyTorch autograd | 支持 autograd |
+| 是否能直接输入 PyTorch 模型 | 通常不能 | 可以 |
+
+为什么要转成 Tensor？因为 PyTorch 的模型层，例如 `nn.Conv2d`，接收的是 Tensor，并且默认按照 `C x H x W` 或 `B x C x H x W` 的格式理解图像。DataLoader 组 batch 后，模型常见输入形状是：
+
+```text
+[B, C, H, W]
+```
+
+其中：
+
+- `B`：batch size。
+- `C`：通道数。
+- `H`：图像高度。
+- `W`：图像宽度。
+
+而很多图像读取库得到的是 `H x W x C`。例如：
+
+```python
+import numpy as np
+
+img_np = np.zeros((224, 224, 3), dtype=np.uint8)
+print(img_np.shape)
+```
+
+输出：
+
+```text
+(224, 224, 3)
+```
+
+这个形状表示：
+
+```text
+H=224, W=224, C=3
+```
+
+经过 `ToTensor()` 后，会变成：
+
+```text
+C=3, H=224, W=224
+```
+
+可以用下面的代码直观看到：
+
+```python
+from PIL import Image
+from torchvision import transforms
+
+img = Image.open("cat.jpg").convert("RGB")
+img_tensor = transforms.ToTensor()(img)
+
+print(img_tensor.shape)
+print(img_tensor.dtype)
+print(img_tensor.min(), img_tensor.max())
+```
+
+可能输出：
+
+```text
+torch.Size([3, 224, 224])
+torch.float32
+tensor(0.) tensor(1.)
+```
+
+`ToTensor()` 对常见 `uint8` 图像的操作可以通俗理解为两步：
+
+```text
+第一步：维度换位
+H x W x C -> C x H x W
+
+第二步：数值缩放
+pixel_float = pixel_uint8 / 255.0
+```
+
+如果原来某个像素的 RGB 值是：
+
+```text
+[0, 128, 255]
+```
+
+经过缩放后大致变成：
+
+```text
+[0 / 255, 128 / 255, 255 / 255]
+= [0.0000, 0.5020, 1.0000]
+```
+
+手动写一个近似过程如下：
+
+```python
+import numpy as np
+import torch
+
+# img 是 PIL Image；img_np: H x W x C, uint8, 取值 0-255
+img_np = np.array(img)
+
+# 先转成 Tensor，再把维度从 HWC 调整为 CHW
+img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
+
+# 转成 float，并缩放到 0-1
+img_tensor = img_tensor.float() / 255.0
+```
+
+这段代码表达的是 `ToTensor()` 最核心的思想。实际 `ToTensor()` 还会处理 PIL 图像模式、灰度图、不同输入类型等细节，但学习时可以先抓住两个重点：**维度从 HWC 变 CHW，数值从 0-255 变 0-1**。
+
 ### Normalize
 
 `Normalize` 对 Tensor 图像按通道做标准化：
