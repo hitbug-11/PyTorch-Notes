@@ -436,6 +436,98 @@ inputs = inputs.to(device, non_blocking=True)
 
 通常可以让数据从 CPU 拷贝到 GPU 更高效。
 
+## 训练循环中的外循环与内循环
+
+理解 DataLoader 时，还需要把它放回完整训练循环中看。下面是一段经典训练代码：
+
+```python
+for epoch in range(100):
+    # 外循环：控制训练轮数。每个 epoch 通常表示完整遍历一遍训练集。
+
+    model.train()
+    # 进入训练模式。会影响 Dropout、BatchNorm 等层的行为。
+
+    for data, labels in train_loader:
+        # 内循环：DataLoader 每次产出一个 batch。
+        # 此时 data 和 labels 已经由 Dataset、Sampler、BatchSampler、collate_fn 准备好。
+
+        outputs = model(data)
+        # 前向传播：batch data -> model -> outputs。
+
+        optimizer.zero_grad()
+        # 清空上一轮 batch 累积的梯度。
+
+        loss = loss_f(outputs, labels)
+        # 根据模型输出和真实标签计算 loss。
+
+        loss.backward()
+        # 反向传播：根据 loss 计算参数梯度。
+
+        optimizer.step()
+        # 参数更新：优化器根据梯度更新模型参数。
+
+        _, predicted = torch.max(outputs.data, 1)
+        correct_num = (predicted == labels).sum()
+        acc = correct_num / labels.shape[0]
+        print("Epoch:{} Train Loss:{:.2f} Acc:{:.0%}".format(epoch, loss, acc))
+```
+
+这段代码对应的数据流可以拆成两层：
+
+```text
+外循环 epoch
+    -> 第 0 轮训练
+    -> 第 1 轮训练
+    -> ...
+    -> 第 99 轮训练
+
+每个 epoch 内部
+    -> DataLoader 重新生成或遍历采样顺序
+    -> 逐个 batch 读取数据
+    -> batch data 输入模型
+    -> forward
+    -> loss
+    -> backward
+    -> optimizer.step()
+```
+
+外循环和内循环的分工如下：
+
+| 循环 | 代码 | 对应含义 | 数据流位置 |
+| --- | --- | --- | --- |
+| 外循环 | `for epoch in range(100)` | 控制训练轮数 | 多次重复遍历训练集 |
+| 模式切换 | `model.train()` | 设置模型为训练模式 | 影响模型层行为，不负责取数据 |
+| 内循环 | `for data, labels in train_loader` | 每次取出一个 batch | 触发 DataLoader 的采样、读取、合并 batch |
+| 前向传播 | `outputs = model(data)` | batch 输入模型得到输出 | `Batch Data -> Model -> outputs` |
+| 损失计算 | `loss = loss_f(outputs, labels)` | 比较预测和标签 | `outputs + labels -> loss` |
+| 反向传播 | `loss.backward()` | 计算梯度 | `loss -> gradients` |
+| 参数更新 | `optimizer.step()` | 更新模型参数 | `gradients -> parameters` |
+
+其中最容易混淆的是内循环：
+
+```python
+for data, labels in train_loader:
+```
+
+这行代码每执行一次，DataLoader 内部大致完成了一次：
+
+```text
+Sampler 产生索引
+    -> BatchSampler 组成 batch 索引
+    -> Dataset.__getitem__ 读取样本
+    -> collate_fn 合并成 data 和 labels
+    -> 返回给训练循环
+```
+
+因此，训练循环中的 `data` 和 `labels` 已经是 batch 级别的数据。以图像分类为例：
+
+```text
+data.shape   = [B, C, H, W]
+labels.shape = [B]
+```
+
+如果 `shuffle=True`，通常每个 epoch 都会重新打乱样本索引顺序。也就是说，同一个样本可能在每个 epoch 中都被训练一次，但它出现在第几个 batch 中可能不同。
+
 ## 数据存储与转移过程
 
 `DataLoader` 本身不会默认把整个数据集一次性读入内存。数据什么时候进入内存，主要取决于 `Dataset` 的实现方式。常见 Dataset 可以分成两类：路径型 Dataset 和数组型 Dataset。
