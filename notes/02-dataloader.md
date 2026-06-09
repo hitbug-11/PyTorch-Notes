@@ -330,6 +330,42 @@ for inputs, targets in train_loader:
     ...
 ```
 
+为了便于理解，可以先把 DataLoader 想象成下面这种简化结构。真实的 PyTorch `DataLoader` 会处理采样器、多进程、内存固定、样本合并等更多细节，但最核心的一点是：`DataLoader.__iter__()` 返回一个迭代器，迭代器的 `__next__()` 每次取出一个 batch。
+
+```python
+# DataLoader 的简化结构
+class DataLoader:
+    def __init__(self, dataset, batch_size=1):
+        self.dataset = dataset
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        # 实现这个方法，使 DataLoader 对象可以被 for 循环遍历。
+        return DataLoaderIter(self)
+
+
+class DataLoaderIter:
+    def __init__(self, loader):
+        self.loader = loader
+        self.index = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        # 实现这个方法，用于获取下一个 batch。
+        if self.index >= len(self.loader.dataset):
+            raise StopIteration
+
+        batch = self.loader.dataset[
+            self.index:self.index + self.loader.batch_size
+        ]
+        self.index += self.loader.batch_size
+        return batch
+```
+
+这里的切片写法只是为了简化理解，真实 DataLoader 通常会先生成一组索引，再逐个调用 `dataset[index]` 读取样本。整体上，`for inputs, targets in train_loader` 背后可以理解为：先调用 `train_loader.__iter__()` 得到迭代器，再反复调用迭代器的 `__next__()`，直到抛出 `StopIteration` 为止。
+
 内部可以按下面的流程理解：
 
 ```text
