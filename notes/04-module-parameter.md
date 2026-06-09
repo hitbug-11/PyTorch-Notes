@@ -264,7 +264,9 @@ out:  [4, 2]
 2. 在 `__init__` 中把需要的网络层创建好。
 3. 在 `forward` 中写清楚模型搭建和前向传播规则。
 
-## Parameter：Module 管理的可训练 Tensor
+## Parameter 与参数管理
+
+### Parameter：Module 管理的可训练 Tensor
 
 `torch.nn.Parameter` 可以理解为“带有模型参数身份的 Tensor”。它本质上仍然能像 Tensor 一样参与加法、矩阵乘法、求梯度等计算；特殊之处在于：当一个 `Parameter` 被赋值为 `nn.Module` 的属性时，PyTorch 会自动把它登记到这个模块的 `_parameters` 中。
 
@@ -463,7 +465,7 @@ TinnyCNN
 
 这些 `weight` 和 `bias` 都是模型参数，会被 `model.parameters()` 找到，并传给优化器。
 
-## 权重、参数、超参数的关系
+### 权重、参数、超参数的关系
 
 学习 PyTorch 时，容易把“权重”“参数”“超参数”混在一起。可以这样区分：
 
@@ -475,7 +477,7 @@ TinnyCNN
 
 所以，权重通常是参数的一部分；参数还包括偏置等其他可学习量；超参数不会被反向传播自动学习，而是控制训练过程。
 
-## Parameter 在优化器中的作用
+### Parameter 在优化器中的作用
 
 优化器需要知道“应该更新哪些参数”。因此创建优化器时，通常会把 `model.parameters()` 传进去：
 
@@ -507,7 +509,7 @@ loss.backward()
 optimizer.step()
 ```
 
-## `parameters()` 如何取出参数
+### `parameters()` 如何取出参数
 
 `nn.Module` 通过注册机制知道自己有哪些子模块和参数，所以可以提供 `parameters()`、`named_parameters()`、`state_dict()` 这些函数。
 
@@ -546,7 +548,7 @@ fc.bias
 
 `parameters()` 只返回参数本身，不返回参数名字。如果想知道参数来自哪一层，应使用 `named_parameters()`。
 
-### `named_parameters()` 和 `state_dict()`
+#### `named_parameters()` 和 `state_dict()`
 
 `named_parameters()` 返回参数名和参数对象，更适合调试和检查模型。
 
@@ -576,7 +578,7 @@ state_dict = model.state_dict()
 torch.save(model.state_dict(), "tinnycnn.pth")
 ```
 
-## 打印模型参数的常用命令
+### 打印模型参数的常用命令
 
 下面的示例都基于这个模型：
 
@@ -584,7 +586,7 @@ torch.save(model.state_dict(), "tinnycnn.pth")
 model = TinnyCNN(cls_num=2)
 ```
 
-### 打印模型结构
+#### 打印模型结构
 
 命令：
 
@@ -603,7 +605,7 @@ TinnyCNN(
 
 这个命令适合快速查看模型由哪些子模块组成。
 
-### 打印参数名、形状和是否参与训练
+#### 打印参数名、形状和是否参与训练
 
 命令：
 
@@ -623,7 +625,7 @@ fc.bias torch.Size([2]) True
 
 这个命令最适合调试模型参数，因为它能同时看到参数名、维度和 `requires_grad` 状态。
 
-### 只打印参数形状
+#### 只打印参数形状
 
 命令：
 
@@ -643,7 +645,7 @@ torch.Size([2])
 
 这个命令适合快速确认优化器能拿到哪些参数，但它不会显示参数名。
 
-### 打印 state_dict 的键
+#### 打印 state_dict 的键
 
 命令：
 
@@ -659,7 +661,7 @@ odict_keys(['convolution_layer.weight', 'convolution_layer.bias', 'fc.weight', '
 
 这个命令适合检查模型保存和加载时会涉及哪些状态。
 
-### 打印完整参数值
+#### 打印完整参数值
 
 命令：
 
