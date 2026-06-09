@@ -330,6 +330,52 @@ for inputs, targets in train_loader:
     ...
 ```
 
+这背后用到的是 Python 的迭代协议。一个对象只要能通过 `iter(obj)` 得到迭代器，并且这个迭代器能通过 `next(iterator)` 不断产出下一个值，就可以放进 `for` 循环中。
+
+先看一个普通迭代器示例：
+
+```python
+class MyIterator:
+    def __init__(self, data):
+        self.data = data
+        self.index = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.index >= len(self.data):
+            raise StopIteration
+
+        item = self.data[self.index]
+        self.index += 1
+        return item
+```
+
+平时写的 `for` 循环是：
+
+```python
+# 你写的代码
+for item in MyIterator([1, 2, 3]):
+    print(item)
+```
+
+可以近似理解成 Python 实际执行了下面的逻辑：
+
+```python
+# Python 实际执行的代码
+iterator = iter(MyIterator([1, 2, 3]))  # 调用 __iter__
+
+while True:
+    try:
+        item = next(iterator)  # 调用 __next__
+        print(item)
+    except StopIteration:
+        break
+```
+
+也就是说，`for` 循环本身并不知道数据从哪里来，它只负责反复调用迭代器的 `__next__()`。什么时候结束，也不是由 `for` 主动判断长度，而是由迭代器抛出 `StopIteration` 通知循环停止。
+
 为了便于理解，可以先把 DataLoader 想象成下面这种简化结构。真实的 PyTorch `DataLoader` 会处理采样器、多进程、内存固定、样本合并等更多细节，但最核心的一点是：`DataLoader.__iter__()` 返回一个迭代器，迭代器的 `__next__()` 每次取出一个 batch。
 
 ```python
