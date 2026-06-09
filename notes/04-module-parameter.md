@@ -198,7 +198,94 @@ outputs = model.forward(inputs)
 
 ## Parameter 的含义
 
-`torch.nn.Parameter` 是一种特殊的 Tensor。它通常表示模型中需要通过训练自动更新的数值，例如卷积核权重、全连接层权重、偏置项。
+`torch.nn.Parameter` 可以理解为“带有模型参数身份的 Tensor”。它本质上仍然能像 Tensor 一样参与加法、矩阵乘法、求梯度等计算；特殊之处在于：当一个 `Parameter` 被赋值为 `nn.Module` 的属性时，PyTorch 会自动把它登记到这个模块的 `_parameters` 中。
+
+也就是说，普通 Tensor 和 `Parameter` 的关键区别不在于能不能计算，而在于会不会被 `Module` 当作模型参数管理。
+
+```python
+import torch
+import torch.nn as nn
+
+
+class MyModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.tensor_weight = torch.randn(2, 3)
+        self.param_weight = nn.Parameter(torch.randn(2, 3))
+
+
+model = MyModule()
+
+for name, param in model.named_parameters():
+    print(name, param.shape)
+```
+
+输出示例：
+
+```text
+param_weight torch.Size([2, 3])
+```
+
+可以看到，`tensor_weight` 虽然也是 Tensor，但不会出现在 `named_parameters()` 中；`param_weight` 是 `nn.Parameter`，因此会被模型识别为参数。
+
+一个更接近 `nn.Linear` 的例子如下。这里没有直接使用 `nn.Linear`，而是手动用 `nn.Parameter` 定义权重和偏置。
+
+```python
+class MyLinear(nn.Module):
+    def __init__(self, in_features, out_features, bias=True):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(out_features, in_features))
+
+        if bias:
+            self.bias = nn.Parameter(torch.zeros(out_features))
+        else:
+            self.bias = None
+
+    def forward(self, x):
+        output = x @ self.weight.t()
+        if self.bias is not None:
+            output += self.bias
+        return output
+```
+
+这段代码中：
+
+- `self.weight` 的形状是 `[out_features, in_features]`，表示线性层的权重矩阵。
+- `self.bias` 的形状是 `[out_features]`，表示每个输出特征对应一个偏置。
+- `forward` 中的 `x @ self.weight.t()` 是矩阵乘法，等价于手动实现全连接层的核心计算。
+- 因为 `weight` 和 `bias` 都是 `nn.Parameter`，所以它们会被 `model.parameters()` 找到，并在训练中由优化器更新。
+
+例如：
+
+```python
+linear = MyLinear(in_features=3, out_features=2)
+
+for name, param in linear.named_parameters():
+    print(name, param.shape, param.requires_grad)
+```
+
+输出示例：
+
+```text
+weight torch.Size([2, 3]) True
+bias torch.Size([2]) True
+```
+
+如果输入是 4 个样本，每个样本 3 个特征：
+
+```python
+x = torch.randn(4, 3)
+output = linear(x)
+print(output.shape)
+```
+
+输出示例：
+
+```text
+torch.Size([4, 2])
+```
+
+这说明 `Parameter` 既是计算图中的 Tensor，又是 `Module` 可以自动管理的可训练参数。
 
 `Module` 和 `Parameter` 的关系可以这样理解：
 
