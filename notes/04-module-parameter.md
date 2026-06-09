@@ -155,15 +155,55 @@ def forward(self, x):
 
 ## TinnyCNN 的运行机制
 
-实际训练或推理时，通常这样调用模型：
+理解 `TinnyCNN` 的运行机制，可以分成两条线：
+
+- 模型创建线：执行 `__init__`，创建子模块，并把子模块和参数注册到 `Module` 内部。
+- 模型调用线：执行 `model(data)`，进入 `Module.__call__`，再由它调用自定义的 `forward`。
+
+### 创建模型：执行 `__init__`
+
+当执行下面这行代码时：
 
 ```python
 model = TinnyCNN(cls_num=2)
+```
+
+PyTorch 会进入 `TinnyCNN.__init__`：
+
+```python
+def __init__(self, cls_num=2):
+    super(TinnyCNN, self).__init__()
+    self.convolution_layer = nn.Conv2d(1, 1, kernel_size=(3, 3))
+    self.fc = nn.Linear(36, cls_num)
+```
+
+这个阶段主要完成三件事：
+
+1. `super(...).__init__()` 初始化 `nn.Module` 的内部管理结构。
+2. `self.convolution_layer = ...` 创建卷积层，并注册到 `model._modules`。
+3. `self.fc = ...` 创建全连接层，并注册到 `model._modules`。
+
+所以模型创建完成后，`TinnyCNN` 大致形成下面的结构：
+
+```text
+TinnyCNN
+├── _modules
+│   ├── "convolution_layer" -> Conv2d(1, 1, kernel_size=(3, 3))
+│   └── "fc" -> Linear(in_features=36, out_features=2)
+└── forward
+    └── 定义上面两个子模块如何被调用
+```
+
+### 调用模型：执行 `model(data)`
+
+实际训练或推理时，通常这样调用模型：
+
+```python
 data = torch.randn(4, 1, 8, 8)
 outputs = model(data)
 ```
 
-注意，推荐写法是 `model(data)`，不是 `model.forward(data)`。因为 `model(data)` 会先进入 `nn.Module` 的调用逻辑，再由 `Module` 在合适的位置调用 `forward`。
+推荐写法是 `model(data)`，不是 `model.forward(data)`。因为 `model(data)` 会先进入 `nn.Module` 的调用逻辑，再由 `Module` 在合适的位置调用 `forward`。
 
 ```mermaid
 flowchart TD
@@ -176,19 +216,47 @@ flowchart TD
     G --> H["return outputs"]
 ```
 
-在 `Module` 的调用逻辑中，会处理 hook 等辅助机制。如果没有注册任何 hook，就会直接调用 `forward`。因此，日常训练中只需要记住：
+`Module.__call__` 或 `_call_impl` 会处理 forward hook、backward hook 等辅助机制。如果没有注册任何 hook，就会直接调用 `forward`。
+
+因此，日常训练中应该写：
 
 ```python
 outputs = model(inputs)
 ```
 
-不要绕过 `Module.__call__` 直接写：
+不建议直接写：
 
 ```python
 outputs = model.forward(inputs)
 ```
 
-后者虽然在简单模型中也可能得到结果，但会跳过 `Module` 的一些统一管理逻辑。
+后者虽然在简单模型中也可能得到结果，但会绕过 `Module.__call__` 中的统一管理逻辑。
+
+### `forward` 中真正发生的计算
+
+进入 `TinnyCNN.forward` 后，数据流才真正开始计算：
+
+```python
+def forward(self, x):
+    x = self.convolution_layer(x)
+    x = x.view(x.size(0), -1)
+    out = self.fc(x)
+    return out
+```
+
+如果输入 `data` 的形状是 `[4, 1, 8, 8]`，各步骤的形状变化是：
+
+```text
+data: [4, 1, 8, 8]
+    -> convolution_layer
+x:    [4, 1, 6, 6]
+    -> view(x.size(0), -1)
+x:    [4, 36]
+    -> fc
+out:  [4, 2]
+```
+
+这里可以看出，`__init__` 中只是创建了 `convolution_layer` 和 `fc`，而真正决定它们调用顺序的是 `forward`。
 
 构建一个 PyTorch 模型，可以总结为三步：
 
@@ -196,7 +264,7 @@ outputs = model.forward(inputs)
 2. 在 `__init__` 中把需要的网络层创建好。
 3. 在 `forward` 中写清楚模型搭建和前向传播规则。
 
-## Parameter 的含义
+## Parameter：Module 管理的可训练 Tensor
 
 `torch.nn.Parameter` 可以理解为“带有模型参数身份的 Tensor”。它本质上仍然能像 Tensor 一样参与加法、矩阵乘法、求梯度等计算；特殊之处在于：当一个 `Parameter` 被赋值为 `nn.Module` 的属性时，PyTorch 会自动把它登记到这个模块的 `_parameters` 中。
 
@@ -287,31 +355,14 @@ torch.Size([4, 2])
 
 这说明 `Parameter` 既是计算图中的 Tensor，又是 `Module` 可以自动管理的可训练参数。
 
-`Module` 和 `Parameter` 的关系可以这样理解：
+### Module、Parameter 和 `_parameters`
+
+`Module`、`Parameter` 和 `_parameters` 的关系可以这样理解：
 
 - `Module` 管结构：模型由哪些层组成，前向传播怎么走。
 - `Parameter` 管数值：这些层里面哪些 Tensor 是需要学习的。
-- 外层 `Module` 会递归管理子模块中的 `Parameter`。
-
-以 `TinnyCNN` 为例：
-
-```text
-TinnyCNN
-├── convolution_layer
-│   ├── weight: Parameter, shape = [1, 1, 3, 3]
-│   └── bias: Parameter, shape = [1]
-└── fc
-    ├── weight: Parameter, shape = [2, 36]
-    └── bias: Parameter, shape = [2]
-```
-
-这些 `weight` 和 `bias` 都是模型参数，会被 `model.parameters()` 找到，并传给优化器。
-
-## `_parameters` 和 `Parameter` 的关系
-
-前面说 `Parameter` 会被 `Module` 自动管理，具体管理位置就是模块内部的 `_parameters` 字典。
-
-可以这样理解：
+- `_parameters` 是每个 `Module` 内部保存 `Parameter` 的字典。
+- 外层 `Module` 会递归遍历子模块，从而找到所有层中的 `Parameter`。
 
 ```text
 nn.Parameter 是参数对象本身
@@ -347,13 +398,15 @@ MyLinear._parameters = {
 }
 ```
 
-也就是说：
+所以：
 
 - `Parameter`：真正参与训练和更新的可学习 Tensor。
 - `_parameters`：`Module` 内部保存这些 `Parameter` 的字典。
 - `model.parameters()`：遍历这些字典，把里面的 `Parameter` 取出来。
 
-需要注意，某个模块的 `_parameters` 只保存“当前模块自己直接拥有的参数”，不会把子模块的参数全都塞进当前模块。
+### TinnyCNN 中参数存放在哪里
+
+某个模块的 `_parameters` 只保存“当前模块自己直接拥有的参数”，不会把子模块的参数全都塞进当前模块。
 
 以 `TinnyCNN` 为例：
 
@@ -395,6 +448,20 @@ TinnyCNN.fc._parameters = {
 ```
 
 因此，不能简单地以为“最外层模型的 `_parameters` 就包含全部参数”。更准确的理解是：每个 `Module` 都有自己的 `_parameters`，外层模型通过递归遍历整个 `Module` 树，才能拿到所有层的参数。
+
+从模型整体看，`TinnyCNN` 的参数树是：
+
+```text
+TinnyCNN
+├── convolution_layer
+│   ├── weight: Parameter, shape = [1, 1, 3, 3]
+│   └── bias: Parameter, shape = [1]
+└── fc
+    ├── weight: Parameter, shape = [2, 36]
+    └── bias: Parameter, shape = [2]
+```
+
+这些 `weight` 和 `bias` 都是模型参数，会被 `model.parameters()` 找到，并传给优化器。
 
 ## 权重、参数、超参数的关系
 
@@ -440,13 +507,11 @@ loss.backward()
 optimizer.step()
 ```
 
-## parameters 相关函数的设计思路
+## `parameters()` 如何取出参数
 
-`nn.Module` 通过注册机制知道自己有哪些子模块和参数，所以可以提供一组遍历函数。
+`nn.Module` 通过注册机制知道自己有哪些子模块和参数，所以可以提供 `parameters()`、`named_parameters()`、`state_dict()` 这些函数。
 
-### `parameters()`
-
-`parameters()` 返回模型中所有参数的迭代器，通常用于传给优化器。它的核心逻辑可以理解为：递归遍历当前 `Module` 以及所有子 `Module`，逐个查看每个模块自己的 `_parameters`，然后把里面的 `Parameter` 一个个取出来。
+`parameters()` 返回模型中所有参数的迭代器。它的核心逻辑可以理解为：递归遍历当前 `Module` 以及所有子 `Module`，逐个查看每个模块自己的 `_parameters`，然后把里面的 `Parameter` 一个个取出来。
 
 ```python
 for param in model.parameters():
@@ -464,7 +529,8 @@ for param in model.parameters():
 可以用伪代码理解为：
 
 ```python
-for module in model 的所有 Module:
+# 遍历 model 自身以及所有子 Module
+for module in all_modules:
     for param in module._parameters.values():
         yield param
 ```
@@ -480,7 +546,7 @@ fc.bias
 
 `parameters()` 只返回参数本身，不返回参数名字。如果想知道参数来自哪一层，应使用 `named_parameters()`。
 
-### `named_parameters()`
+### `named_parameters()` 和 `state_dict()`
 
 `named_parameters()` 返回参数名和参数对象，更适合调试和检查模型。
 
@@ -497,8 +563,6 @@ convolution_layer.bias
 fc.weight
 fc.bias
 ```
-
-### `state_dict()`
 
 `state_dict()` 返回模型的状态字典，里面包含参数，也包含需要保存的 buffer。
 
