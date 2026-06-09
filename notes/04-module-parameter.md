@@ -307,6 +307,95 @@ TinnyCNN
 
 这些 `weight` 和 `bias` 都是模型参数，会被 `model.parameters()` 找到，并传给优化器。
 
+## `_parameters` 和 `Parameter` 的关系
+
+前面说 `Parameter` 会被 `Module` 自动管理，具体管理位置就是模块内部的 `_parameters` 字典。
+
+可以这样理解：
+
+```text
+nn.Parameter 是参数对象本身
+module._parameters 是 Module 内部用来保存这些参数对象的字典
+```
+
+例如：
+
+```python
+class MyLinear(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(2, 3))
+```
+
+执行下面这行代码时：
+
+```python
+self.weight = nn.Parameter(torch.randn(2, 3))
+```
+
+`nn.Module.__setattr__` 会发现右侧是 `nn.Parameter`，于是把它登记到当前模块的 `_parameters` 中。可以近似理解为：
+
+```python
+self._parameters["weight"] = self.weight
+```
+
+所以这个模块内部大致是：
+
+```text
+MyLinear._parameters = {
+    "weight": Parameter(...)
+}
+```
+
+也就是说：
+
+- `Parameter`：真正参与训练和更新的可学习 Tensor。
+- `_parameters`：`Module` 内部保存这些 `Parameter` 的字典。
+- `model.parameters()`：遍历这些字典，把里面的 `Parameter` 取出来。
+
+需要注意，某个模块的 `_parameters` 只保存“当前模块自己直接拥有的参数”，不会把子模块的参数全都塞进当前模块。
+
+以 `TinnyCNN` 为例：
+
+```python
+class TinnyCNN(nn.Module):
+    def __init__(self, cls_num=2):
+        super(TinnyCNN, self).__init__()
+        self.convolution_layer = nn.Conv2d(1, 1, kernel_size=(3, 3))
+        self.fc = nn.Linear(36, cls_num)
+```
+
+`TinnyCNN` 自己没有直接写：
+
+```python
+self.weight = nn.Parameter(...)
+```
+
+所以最外层的 `TinnyCNN._parameters` 通常是空的。它真正直接管理的是两个子模块：
+
+```text
+TinnyCNN._modules = {
+    "convolution_layer": Conv2d(...),
+    "fc": Linear(...)
+}
+```
+
+参数则分别存放在子模块自己的 `_parameters` 中：
+
+```text
+TinnyCNN.convolution_layer._parameters = {
+    "weight": Parameter(...),
+    "bias": Parameter(...)
+}
+
+TinnyCNN.fc._parameters = {
+    "weight": Parameter(...),
+    "bias": Parameter(...)
+}
+```
+
+因此，不能简单地以为“最外层模型的 `_parameters` 就包含全部参数”。更准确的理解是：每个 `Module` 都有自己的 `_parameters`，外层模型通过递归遍历整个 `Module` 树，才能拿到所有层的参数。
+
 ## 权重、参数、超参数的关系
 
 学习 PyTorch 时，容易把“权重”“参数”“超参数”混在一起。可以这样区分：
@@ -357,14 +446,39 @@ optimizer.step()
 
 ### `parameters()`
 
-`parameters()` 返回模型中所有参数的迭代器，通常用于传给优化器。
+`parameters()` 返回模型中所有参数的迭代器，通常用于传给优化器。它的核心逻辑可以理解为：递归遍历当前 `Module` 以及所有子 `Module`，逐个查看每个模块自己的 `_parameters`，然后把里面的 `Parameter` 一个个取出来。
 
 ```python
 for param in model.parameters():
     print(param.shape)
 ```
 
-它只返回参数本身，不返回参数名字。
+以 `TinnyCNN` 为例，`model.parameters()` 大致会按下面的思路工作：
+
+```text
+遍历 TinnyCNN._parameters
+遍历 TinnyCNN._modules["convolution_layer"]._parameters
+遍历 TinnyCNN._modules["fc"]._parameters
+```
+
+可以用伪代码理解为：
+
+```python
+for module in model 的所有 Module:
+    for param in module._parameters.values():
+        yield param
+```
+
+实际拿到的参数就是：
+
+```text
+convolution_layer.weight
+convolution_layer.bias
+fc.weight
+fc.bias
+```
+
+`parameters()` 只返回参数本身，不返回参数名字。如果想知道参数来自哪一层，应使用 `named_parameters()`。
 
 ### `named_parameters()`
 
