@@ -1,11 +1,20 @@
 # 05-module_parameter
 
+本篇围绕 `nn.Parameter` 解释 PyTorch 如何识别、保存、遍历和更新模型参数。核心主线是：
 
-## Parameter：Module 管理的可训练 Tensor
+```text
+Parameter 是什么
+    -> 如何被 Module 注册到 _parameters
+    -> 多个 Parameter 如何用容器管理
+    -> model.parameters() 如何取出参数
+    -> 优化器如何更新参数
+```
+
+## Parameter 是什么
 
 `torch.nn.Parameter` 可以理解为“带有模型参数身份的 Tensor”。它本质上仍然能像 Tensor 一样参与加法、矩阵乘法、求梯度等计算；特殊之处在于：当一个 `Parameter` 被赋值为 `nn.Module` 的属性时，PyTorch 会自动把它登记到这个模块的 `_parameters` 中。
 
-也就是说，普通 Tensor 和 `Parameter` 的关键区别不在于能不能计算，而在于会不会被 `Module` 当作模型参数管理。
+普通 Tensor 和 `Parameter` 的关键区别不在于能不能计算，而在于会不会被 `Module` 当作模型参数管理。
 
 ```python
 import torch
@@ -31,9 +40,9 @@ for name, param in model.named_parameters():
 param_weight torch.Size([2, 3])
 ```
 
-可以看到，`tensor_weight` 虽然也是 Tensor，但不会出现在 `named_parameters()` 中；`param_weight` 是 `nn.Parameter`，因此会被模型识别为参数。
+`tensor_weight` 虽然也是 Tensor，但不会出现在 `named_parameters()` 中；`param_weight` 是 `nn.Parameter`，因此会被模型识别为参数。
 
-一个更接近 `nn.Linear` 的例子如下。这里没有直接使用 `nn.Linear`，而是手动用 `nn.Parameter` 定义权重和偏置。
+下面手动实现一个接近 `nn.Linear` 的层，进一步说明 `Parameter` 如何参与计算：
 
 ```python
 class MyLinear(nn.Module):
@@ -57,8 +66,8 @@ class MyLinear(nn.Module):
 
 - `self.weight` 的形状是 `[out_features, in_features]`，表示线性层的权重矩阵。
 - `self.bias` 的形状是 `[out_features]`，表示每个输出特征对应一个偏置。
-- `forward` 中的 `x @ self.weight.t()` 是矩阵乘法，等价于手动实现全连接层的核心计算。
-- 因为 `weight` 和 `bias` 都是 `nn.Parameter`，所以它们会被 `model.parameters()` 找到，并在训练中由优化器更新。
+- `x @ self.weight.t()` 是矩阵乘法，等价于手动实现全连接层的核心计算。
+- `weight` 和 `bias` 都是 `nn.Parameter`，会被 `model.parameters()` 找到，并在训练中由优化器更新。
 
 例如：
 
@@ -92,18 +101,17 @@ torch.Size([4, 2])
 
 这说明 `Parameter` 既是计算图中的 Tensor，又是 `Module` 可以自动管理的可训练参数。
 
-## Module、Parameter 和 `_parameters`
+## 参数如何注册
 
 `Module`、`Parameter` 和 `_parameters` 的关系可以这样理解：
 
 - `Module` 管结构：模型由哪些层组成，前向传播怎么走。
 - `Parameter` 管数值：这些层里面哪些 Tensor 是需要学习的。
 - `_parameters` 是每个 `Module` 内部保存 `Parameter` 的字典。
-- 外层 `Module` 会递归遍历子模块，从而找到所有层中的 `Parameter`。
 
 ```text
 nn.Parameter 是参数对象本身
-module._parameters 是 Module 内部用来保存这些参数对象的字典
+module._parameters 是 Module 内部保存这些参数对象的字典
 ```
 
 例如：
@@ -135,13 +143,13 @@ MyLinear._parameters = {
 }
 ```
 
-所以：
+因此：
 
-- `Parameter`：真正参与训练和更新的可学习 Tensor。
-- `_parameters`：`Module` 内部保存这些 `Parameter` 的字典。
-- `model.parameters()`：遍历这些字典，把里面的 `Parameter` 取出来。
+- `Parameter` 是真正参与训练和更新的可学习 Tensor。
+- `_parameters` 是 `Module` 内部保存这些 `Parameter` 的字典。
+- `model.parameters()` 会遍历这些字典，把里面的 `Parameter` 取出来。
 
-## TinnyCNN 中参数存放在哪里
+## 参数存放位置
 
 某个模块的 `_parameters` 只保存“当前模块自己直接拥有的参数”，不会把子模块的参数全都塞进当前模块。
 
@@ -170,7 +178,7 @@ TinnyCNN._modules = {
 }
 ```
 
-参数则分别存放在子模块自己的 `_parameters` 中：
+参数分别存放在子模块自己的 `_parameters` 中：
 
 ```text
 TinnyCNN.convolution_layer._parameters = {
@@ -184,8 +192,6 @@ TinnyCNN.fc._parameters = {
 }
 ```
 
-因此，不能简单地以为“最外层模型的 `_parameters` 就包含全部参数”。更准确的理解是：每个 `Module` 都有自己的 `_parameters`，外层模型通过递归遍历整个 `Module` 树，才能拿到所有层的参数。
-
 从模型整体看，`TinnyCNN` 的参数树是：
 
 ```text
@@ -198,7 +204,7 @@ TinnyCNN
     └── bias: Parameter, shape = [2]
 ```
 
-这些 `weight` 和 `bias` 都是模型参数，会被 `model.parameters()` 找到，并传给优化器。
+所以，不能简单地以为“最外层模型的 `_parameters` 就包含全部参数”。更准确的理解是：每个 `Module` 都有自己的 `_parameters`，外层模型通过递归遍历整个 `Module` 树，才能拿到所有层的参数。
 
 ## 参数容器
 
@@ -222,7 +228,7 @@ class MyModule(nn.Module):
         return x
 ```
 
-这里的 `self.params["left"]` 和 `self.params["right"]` 都是 `Parameter`，会被注册到模型中。查看参数名时会带上容器名称和 key：
+查看参数名时，会带上容器名称和 key：
 
 ```python
 model = MyModule()
@@ -279,19 +285,85 @@ params.9 torch.Size([10, 10])
 - 可训练参数用 `ParameterList`、`ParameterDict`。
 - 普通 Python `list`、`dict` 只保存对象，不负责把里面的 `Parameter` 注册给 `Module`。
 
-## 权重、参数、超参数的关系
+## 参数如何取出
 
-学习 PyTorch 时，容易把“权重”“参数”“超参数”混在一起。可以这样区分：
+`nn.Module` 通过注册机制知道自己有哪些子模块和参数，所以可以提供 `parameters()`、`named_parameters()`、`state_dict()` 这些函数。
 
-| 概念 | 含义 | 是否由训练自动学习 | 例子 |
-| --- | --- | --- | --- |
-| 权重 | 某一层中的可学习矩阵或卷积核 | 是 | `Conv2d.weight`、`Linear.weight` |
-| 参数 | 模型中所有可学习量的统称 | 是 | 权重、偏置 |
-| 超参数 | 训练前由人指定的配置 | 否 | `lr`、`momentum`、`weight_decay`、`batch_size` |
+### `parameters()`
 
-所以，权重通常是参数的一部分；参数还包括偏置等其他可学习量；超参数不会被反向传播自动学习，而是控制训练过程。
+`parameters()` 返回模型中所有参数的迭代器。它的核心逻辑可以理解为：递归遍历当前 `Module` 以及所有子 `Module`，逐个查看每个模块自己的 `_parameters`，然后把里面的 `Parameter` 一个个取出来。
 
-## Parameter 在优化器中的作用
+```python
+for param in model.parameters():
+    print(param.shape)
+```
+
+以 `TinnyCNN` 为例，`model.parameters()` 大致会按下面的思路工作：
+
+```text
+遍历 TinnyCNN._parameters
+遍历 TinnyCNN._modules["convolution_layer"]._parameters
+遍历 TinnyCNN._modules["fc"]._parameters
+```
+
+可以用伪代码理解为：
+
+```text
+遍历 model 自身以及所有子 Module:
+    遍历当前 module._parameters.values():
+        逐个返回 param
+```
+
+实际拿到的参数就是：
+
+```text
+convolution_layer.weight
+convolution_layer.bias
+fc.weight
+fc.bias
+```
+
+`parameters()` 只返回参数本身，不返回参数名字。如果想知道参数来自哪一层，应使用 `named_parameters()`。
+
+### `named_parameters()`
+
+`named_parameters()` 返回参数名和参数对象，更适合调试和检查模型。
+
+```python
+for name, param in model.named_parameters():
+    print(name, param.shape, param.requires_grad)
+```
+
+输出示例：
+
+```text
+convolution_layer.weight torch.Size([1, 1, 3, 3]) True
+convolution_layer.bias torch.Size([1]) True
+fc.weight torch.Size([2, 36]) True
+fc.bias torch.Size([2]) True
+```
+
+### `state_dict()`
+
+`state_dict()` 返回模型的状态字典，里面包含参数，也包含需要保存的 buffer。
+
+```python
+print(model.state_dict().keys())
+```
+
+输出示例：
+
+```text
+odict_keys(['convolution_layer.weight', 'convolution_layer.bias', 'fc.weight', 'fc.bias'])
+```
+
+保存模型参数时，最常见的方式是保存 `state_dict`：
+
+```python
+torch.save(model.state_dict(), "tinnycnn.pth")
+```
+
+## 参数如何更新
 
 优化器需要知道“应该更新哪些参数”。因此创建优化器时，通常会把 `model.parameters()` 传进去：
 
@@ -323,76 +395,19 @@ loss.backward()
 optimizer.step()
 ```
 
-## `parameters()` 如何取出参数
+## 相关概念
 
-`nn.Module` 通过注册机制知道自己有哪些子模块和参数，所以可以提供 `parameters()`、`named_parameters()`、`state_dict()` 这些函数。
+学习 PyTorch 时，容易把“权重”“参数”“超参数”混在一起。可以这样区分：
 
-`parameters()` 返回模型中所有参数的迭代器。它的核心逻辑可以理解为：递归遍历当前 `Module` 以及所有子 `Module`，逐个查看每个模块自己的 `_parameters`，然后把里面的 `Parameter` 一个个取出来。
+| 概念 | 含义 | 是否由训练自动学习 | 例子 |
+| --- | --- | --- | --- |
+| 权重 | 某一层中的可学习矩阵或卷积核 | 是 | `Conv2d.weight`、`Linear.weight` |
+| 参数 | 模型中所有可学习量的统称 | 是 | 权重、偏置 |
+| 超参数 | 训练前由人指定的配置 | 否 | `lr`、`momentum`、`weight_decay`、`batch_size` |
 
-```python
-for param in model.parameters():
-    print(param.shape)
-```
+权重通常是参数的一部分；参数还包括偏置等其他可学习量；超参数不会被反向传播自动学习，而是控制训练过程。
 
-以 `TinnyCNN` 为例，`model.parameters()` 大致会按下面的思路工作：
-
-```text
-遍历 TinnyCNN._parameters
-遍历 TinnyCNN._modules["convolution_layer"]._parameters
-遍历 TinnyCNN._modules["fc"]._parameters
-```
-
-可以用伪代码理解为：
-
-```python
-# 遍历 model 自身以及所有子 Module
-for module in all_modules:
-    for param in module._parameters.values():
-        yield param
-```
-
-实际拿到的参数就是：
-
-```text
-convolution_layer.weight
-convolution_layer.bias
-fc.weight
-fc.bias
-```
-
-`parameters()` 只返回参数本身，不返回参数名字。如果想知道参数来自哪一层，应使用 `named_parameters()`。
-
-### `named_parameters()` 和 `state_dict()`
-
-`named_parameters()` 返回参数名和参数对象，更适合调试和检查模型。
-
-```python
-for name, param in model.named_parameters():
-    print(name, param.shape, param.requires_grad)
-```
-
-它会递归遍历当前模块及其子模块。例如 `TinnyCNN` 中的参数名会带上子模块名称：
-
-```text
-convolution_layer.weight
-convolution_layer.bias
-fc.weight
-fc.bias
-```
-
-`state_dict()` 返回模型的状态字典，里面包含参数，也包含需要保存的 buffer。
-
-```python
-state_dict = model.state_dict()
-```
-
-保存模型参数时，最常见的方式是保存 `state_dict`：
-
-```python
-torch.save(model.state_dict(), "tinnycnn.pth")
-```
-
-## 打印模型参数的常用命令
+## 打印参数
 
 下面的示例都基于这个模型：
 
@@ -419,7 +434,7 @@ TinnyCNN(
 
 这个命令适合快速查看模型由哪些子模块组成。
 
-### 打印参数名、形状和是否参与训练
+### 打印参数名
 
 命令：
 
@@ -439,7 +454,7 @@ fc.bias torch.Size([2]) True
 
 这个命令最适合调试模型参数，因为它能同时看到参数名、维度和 `requires_grad` 状态。
 
-### 只打印参数形状
+### 打印参数形状
 
 命令：
 
@@ -458,22 +473,6 @@ torch.Size([2])
 ```
 
 这个命令适合快速确认优化器能拿到哪些参数，但它不会显示参数名。
-
-### 打印 state_dict 的键
-
-命令：
-
-```python
-print(model.state_dict().keys())
-```
-
-输出示例：
-
-```text
-odict_keys(['convolution_layer.weight', 'convolution_layer.bias', 'fc.weight', 'fc.bias'])
-```
-
-这个命令适合检查模型保存和加载时会涉及哪些状态。
 
 ### 打印完整参数值
 
