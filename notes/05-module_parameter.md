@@ -200,6 +200,85 @@ TinnyCNN
 
 这些 `weight` 和 `bias` 都是模型参数，会被 `model.parameters()` 找到，并传给优化器。
 
+## 参数容器
+
+除了单个 `Parameter`，PyTorch 也提供了参数容器：`nn.ParameterList` 和 `nn.ParameterDict`。它们和 `ModuleList`、`ModuleDict` 的思路类似，只不过管理对象从子模块变成了参数。
+
+需要参数容器的典型场景是：模型里有一组需要训练的矩阵或向量，但它们本身不是完整网络层。如果直接把多个 `nn.Parameter` 放进普通 Python `list` 或 `dict`，`Module` 不会自动递归注册里面的元素；使用 `ParameterList` 或 `ParameterDict`，这些参数才能被 `model.parameters()` 找到。
+
+`ParameterDict` 适合按名字选择参数：
+
+```python
+class MyModule(nn.Module):
+    def __init__(self):
+        super(MyModule, self).__init__()
+        self.params = nn.ParameterDict({
+            "left": nn.Parameter(torch.randn(5, 10)),
+            "right": nn.Parameter(torch.randn(5, 10)),
+        })
+
+    def forward(self, x, choice):
+        x = self.params[choice].mm(x)
+        return x
+```
+
+这里的 `self.params["left"]` 和 `self.params["right"]` 都是 `Parameter`，会被注册到模型中。查看参数名时会带上容器名称和 key：
+
+```python
+model = MyModule()
+
+for name, param in model.named_parameters():
+    print(name, param.shape)
+```
+
+输出示例：
+
+```text
+params.left torch.Size([5, 10])
+params.right torch.Size([5, 10])
+```
+
+`ParameterList` 适合按顺序保存一组参数，可以像列表一样迭代，也可以用整数下标访问：
+
+```python
+class MyModule(nn.Module):
+    def __init__(self):
+        super(MyModule, self).__init__()
+        self.params = nn.ParameterList([
+            nn.Parameter(torch.randn(10, 10))
+            for _ in range(10)
+        ])
+
+    def forward(self, x):
+        for i, p in enumerate(self.params):
+            x = self.params[i // 2].mm(x) + p.mm(x)
+        return x
+```
+
+查看参数名时，`ParameterList` 会用数字下标作为名字的一部分：
+
+```python
+model = MyModule()
+
+for name, param in model.named_parameters():
+    print(name, param.shape)
+```
+
+输出示例：
+
+```text
+params.0 torch.Size([10, 10])
+params.1 torch.Size([10, 10])
+...
+params.9 torch.Size([10, 10])
+```
+
+简单总结：
+
+- 子模块用 `ModuleList`、`ModuleDict`。
+- 可训练参数用 `ParameterList`、`ParameterDict`。
+- 普通 Python `list`、`dict` 只保存对象，不负责把里面的 `Parameter` 注册给 `Module`。
+
 ## 权重、参数、超参数的关系
 
 学习 PyTorch 时，容易把“权重”“参数”“超参数”混在一起。可以这样区分：
@@ -437,6 +516,7 @@ tensor([ 0.0842, -0.0527], requires_grad=True)
 - `Parameter` 是带有模型参数身份的 Tensor，赋值给 `Module` 属性后会被登记到 `_parameters`。
 - 普通 Tensor 可以参与计算，但不会自动出现在 `named_parameters()` 中。
 - 每个 `Module` 都有自己的 `_parameters`，子模块参数保存在子模块自己的 `_parameters` 中。
+- 多个独立参数应使用 `ParameterList` 或 `ParameterDict` 管理，避免普通 `list`、`dict` 中的参数无法被模型注册。
 - `model.parameters()` 会递归遍历整个 `Module` 树，逐层取出 `_parameters` 中的参数。
 - 优化器通过 `model.parameters()` 获取需要更新的参数；`lr`、`momentum`、`weight_decay` 等是控制更新方式的超参数。
 - 打印模型参数时，最常用的是 `print(model)`、`named_parameters()` 和 `state_dict().keys()`。

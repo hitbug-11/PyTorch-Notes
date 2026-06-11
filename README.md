@@ -31,7 +31,7 @@ PyTorch-Notes/
 | [DataLoader](notes/02-dataloader.md) | 介绍 `torch.utils.data.DataLoader` 如何组织 batch、控制采样顺序、合并样本并配合训练循环使用。 |
 | [Transforms](notes/03-transforms.md) | 介绍 `torchvision.transforms` 在数据预处理、数据增强、类型转换和标准化中的作用。 |
 | [04-module_overview](notes/04-module_overview.md) | 介绍 `nn.Module` 的模型组织方式、子模块注册、TinnyCNN 示例和前向调用机制。 |
-| [05-module_parameter](notes/05-module_parameter.md) | 介绍 `Parameter`、`_parameters`、`parameters()`、优化器参数传递和模型参数打印方法。 |
+| [05-module_parameter](notes/05-module_parameter.md) | 介绍 `Parameter`、`_parameters`、参数容器、`parameters()`、优化器参数传递和模型参数打印方法。 |
 
 ## 内容范围
 
