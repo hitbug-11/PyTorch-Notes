@@ -1,14 +1,17 @@
 # 05-module_parameter
 
-本篇围绕 `nn.Parameter` 解释 PyTorch 如何识别、保存、遍历和更新模型参数。核心主线是：
+本篇用于复习和速查 `nn.Parameter` 的核心机制，按“定义 -> 注册 -> 存放 -> 容器 -> 取出 -> 更新 -> 打印”的顺序展开。
 
-```text
-Parameter 是什么
-    -> 如何被 Module 注册到 _parameters
-    -> 多个 Parameter 如何用容器管理
-    -> model.parameters() 如何取出参数
-    -> 优化器如何更新参数
-```
+速查目录：
+
+- `Parameter 是什么`：区分普通 Tensor 和 `nn.Parameter`，并用手写 `MyLinear` 说明参数如何参与计算。
+- `参数如何注册`：解释 `Parameter` 被赋值给 `Module` 属性后，如何进入 `_parameters`。
+- `参数存放位置`：用 `TinnyCNN` 说明最外层模块和子模块各自保存哪些参数。
+- `参数容器`：说明 `ParameterList`、`ParameterDict` 适合管理多组独立参数。
+- `参数如何取出`：梳理 `parameters()`、`named_parameters()`、`state_dict()` 的作用。
+- `参数如何更新`：说明优化器如何通过 `model.parameters()` 获取并更新参数。
+- `相关概念`：区分权重、参数、超参数。
+- `打印参数`：汇总常用打印命令和输出示例。
 
 ## Parameter 是什么
 
