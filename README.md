@@ -15,6 +15,7 @@ PyTorch-Notes/
 │   ├── 03-transforms.md
 │   ├── 04-module_overview.md
 │   ├── 05-module_parameter.md
+│   ├── 06-module_containers.md
 │   └── assets/
 └── .gitignore
 ```
@@ -32,6 +33,7 @@ PyTorch-Notes/
 | [Transforms](notes/03-transforms.md) | 介绍 `torchvision.transforms` 在数据预处理、数据增强、类型转换和标准化中的作用。 |
 | [04-module_overview](notes/04-module_overview.md) | 介绍 `nn.Module` 的模型组织方式、子模块注册、TinnyCNN 示例和前向调用机制。 |
 | [05-module_parameter](notes/05-module_parameter.md) | 介绍 `Parameter`、`_parameters`、参数容器、`parameters()`、优化器参数传递和模型参数打印方法。 |
+| [06-module_containers](notes/06-module_containers.md) | 介绍 `Sequential`、`ModuleList`、`ModuleDict` 的使用场景、注册机制、前向调用方式和 AlexNet 中的容器应用。 |
 
 ## 内容范围
 
