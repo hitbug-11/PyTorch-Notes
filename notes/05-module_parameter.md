@@ -1,6 +1,6 @@
 # 05-module_parameter
 
-本篇用于复习和速查 `nn.Parameter` 的核心机制，按“定义 -> 注册 -> 存放 -> 容器 -> 取出 -> 更新 -> 打印”的顺序展开。
+本篇用于复习和速查 `nn.Parameter` 的核心机制，按“定义 -> 注册 -> 存放 -> 容器 -> 取出 -> 载入 -> 更新 -> 打印”的顺序展开。
 
 速查目录：
 
@@ -9,6 +9,7 @@
 - `参数存放位置`：用 `TinnyCNN` 说明最外层模块和子模块各自保存哪些参数。
 - `参数容器`：说明 `ParameterList`、`ParameterDict` 适合管理多组独立参数。
 - `参数如何取出`：梳理 `parameters()`、`named_parameters()`、`state_dict()` 的作用。
+- `参数如何载入`：说明如何用 `torch.load()` 和 `load_state_dict()` 载入已保存参数。
 - `参数如何更新`：说明优化器如何通过 `model.parameters()` 获取并更新参数。
 - `相关概念`：区分权重、参数、超参数。
 - `打印参数`：汇总常用打印命令和输出示例。
@@ -366,6 +367,182 @@ odict_keys(['convolution_layer.weight', 'convolution_layer.bias', 'fc.weight', '
 torch.save(model.state_dict(), "tinnycnn.pth")
 ```
 
+## 参数如何载入
+
+保存参数后，最常见的载入方式是：
+
+```python
+state_dict = torch.load("tinnycnn.pth", map_location="cpu", weights_only=True)
+model.load_state_dict(state_dict)
+```
+
+这里要区分两个步骤：
+
+- `torch.load()`：从文件中读取保存下来的对象，常见结果是一个 `state_dict` 字典。
+- `model.load_state_dict()`：把这个字典中的参数和 buffer 拷贝到当前模型对象中。
+
+完整流程通常是：先重新创建同结构模型，再载入参数。
+
+```python
+import torch
+import torch.nn as nn
+
+
+class TinnyCNN(nn.Module):
+    def __init__(self, cls_num=2):
+        super().__init__()
+        self.convolution_layer = nn.Conv2d(1, 1, kernel_size=(3, 3))
+        self.fc = nn.Linear(36, cls_num)
+
+    def forward(self, x):
+        x = self.convolution_layer(x)
+        x = torch.flatten(x, start_dim=1)
+        x = self.fc(x)
+        return x
+
+
+model = TinnyCNN(cls_num=2)
+
+state_dict = torch.load(
+    "tinnycnn.pth",
+    map_location="cpu",
+    weights_only=True,
+)
+
+model.load_state_dict(state_dict)
+model.eval()
+```
+
+这个例子中，`tinnycnn.pth` 保存的是：
+
+```python
+torch.save(model.state_dict(), "tinnycnn.pth")
+```
+
+所以载入时也应该先创建 `TinnyCNN(cls_num=2)`，再调用 `load_state_dict()`。参数文件只保存参数数值，不保存 `forward()` 逻辑；如果模型结构不一致，参数名或参数形状就可能对不上。
+
+`torch.load()` 常用参数：
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `f` | 文件路径或文件对象 | 要读取的 `.pth`、`.pt` 等文件。 |
+| `map_location` | 设备映射 | 控制参数载入到哪里。常用 `"cpu"`，可以避免在没有 GPU 或 GPU 编号变化时加载失败。 |
+| `weights_only` | 是否只按权重安全载入 | 推荐载入 `state_dict` 时显式写 `weights_only=True`，减少反序列化不可信对象的风险。 |
+
+`load_state_dict()` 常用参数：
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `state_dict` | 参数字典 | 通常来自 `torch.load()`，里面的 key 应该和当前模型 `state_dict().keys()` 对应。 |
+| `strict` | 是否严格匹配 | 默认 `True`，要求参数名完全一致；为 `False` 时允许缺失或多余 key，常用于迁移学习或只加载部分参数。 |
+| `assign` | 是否保留 state_dict 中 Tensor 属性 | 默认 `False`，通常不需要手动改。若设为 `True`，一般应在载入参数之后再创建优化器。 |
+
+### 严格载入
+
+默认情况下，`load_state_dict()` 使用 `strict=True`：
+
+```python
+model.load_state_dict(state_dict)
+```
+
+这要求保存文件中的 key 和当前模型的 key 完全匹配。例如当前模型需要：
+
+```text
+convolution_layer.weight
+convolution_layer.bias
+fc.weight
+fc.bias
+```
+
+那么保存文件里也应该有这些 key，而且对应 Tensor 的形状也要一致。
+
+如果模型结构改过，比如 `fc` 输出类别数从 2 改成 10，那么 `fc.weight` 和 `fc.bias` 的形状就不匹配，严格载入会报错。
+
+### 非严格载入
+
+如果只想载入部分参数，可以使用 `strict=False`：
+
+```python
+incompatible_keys = model.load_state_dict(state_dict, strict=False)
+
+print(incompatible_keys.missing_keys)
+print(incompatible_keys.unexpected_keys)
+```
+
+返回值中：
+
+- `missing_keys`：当前模型需要，但参数文件里没有的 key。
+- `unexpected_keys`：参数文件里有，但当前模型用不到的 key。
+
+这种方式常用于迁移学习。例如只载入卷积特征提取层，重新训练分类头：
+
+```python
+model = TinnyCNN(cls_num=10)
+state_dict = torch.load("tinnycnn.pth", map_location="cpu", weights_only=True)
+
+current_state = model.state_dict()
+
+filtered_state = {
+    name: value
+    for name, value in state_dict.items()
+    if name in current_state and value.shape == current_state[name].shape
+}
+
+model.load_state_dict(filtered_state, strict=False)
+```
+
+这里通过参数名和形状筛选，只把能对上的参数载入当前模型。分类头形状不一致的参数会被跳过，由当前模型重新初始化。
+
+### 设备相关注意事项
+
+如果参数是在 GPU 上保存的，但当前环境只有 CPU，直接 `torch.load()` 可能会尝试把 Tensor 放回原来的 GPU。更稳妥的写法是：
+
+```python
+state_dict = torch.load(
+    "tinnycnn.pth",
+    map_location="cpu",
+    weights_only=True,
+)
+model.load_state_dict(state_dict)
+```
+
+如果后续要在 GPU 上推理或训练，可以在载入后再移动模型：
+
+```python
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+model.load_state_dict(state_dict)
+model.to(device)
+```
+
+### 训练检查点
+
+如果保存的不只是模型参数，而是训练检查点，文件里通常会包含模型参数、优化器状态和训练轮数：
+
+```python
+torch.save({
+    "epoch": epoch,
+    "model_state_dict": model.state_dict(),
+    "optimizer_state_dict": optimizer.state_dict(),
+}, "checkpoint.pth")
+```
+
+载入时要先取出对应字段：
+
+```python
+checkpoint = torch.load(
+    "checkpoint.pth",
+    map_location="cpu",
+    weights_only=True,
+)
+
+model.load_state_dict(checkpoint["model_state_dict"])
+optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+start_epoch = checkpoint["epoch"] + 1
+```
+
+这类写法适合中断后继续训练。如果只是做推理，通常只需要保存和载入 `model.state_dict()`。
+
 ## 参数如何更新
 
 优化器需要知道“应该更新哪些参数”。因此创建优化器时，通常会把 `model.parameters()` 传进去：
@@ -520,5 +697,12 @@ tensor([ 0.0842, -0.0527], requires_grad=True)
 - 每个 `Module` 都有自己的 `_parameters`，子模块参数保存在子模块自己的 `_parameters` 中。
 - 多个独立参数应使用 `ParameterList` 或 `ParameterDict` 管理，避免普通 `list`、`dict` 中的参数无法被模型注册。
 - `model.parameters()` 会递归遍历整个 `Module` 树，逐层取出 `_parameters` 中的参数。
+- 保存和载入参数时，推荐保存 `model.state_dict()`，再用 `torch.load()` 与 `model.load_state_dict()` 恢复到同结构模型中。
+- 载入参数前要先创建模型结构；参数文件只保存数值，不保存模型的 `forward()` 逻辑。
 - 优化器通过 `model.parameters()` 获取需要更新的参数；`lr`、`momentum`、`weight_decay` 等是控制更新方式的超参数。
 - 打印模型参数时，最常用的是 `print(model)`、`named_parameters()` 和 `state_dict().keys()`。
+
+## 参考资料
+
+- [PyTorch torch.load](https://docs.pytorch.org/docs/2.12/generated/torch.load.html)
+- [PyTorch Module.load_state_dict](https://docs.pytorch.org/docs/2.12/generated/torch.nn.Module.html#torch.nn.Module.load_state_dict)
