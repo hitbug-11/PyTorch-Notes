@@ -1,15 +1,15 @@
-# 07-module_layer
+# 07-module_layers
 
-本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layer 总览 -> Convolutional Layers -> 后续常见 layer”的顺序持续补充。
+本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layers 总览 -> Convolutional Layers -> Pooling Layers -> 后续常见 layers”的顺序持续补充。
 
 速查目录：
 
-- `Layer 总览`：说明 layer 和 `nn.Module` 的关系，以及学习单个 layer 时应关注哪些问题。
+- `Layers 总览`：说明 layer 和 `nn.Module` 的关系，以及学习单个 layer 时应关注哪些问题。
 - `Convolutional Layers`：介绍卷积层的基本思想，并重点剖析 `nn.Conv2d` 的参数、输入输出形状和输出尺寸公式。
-- `单个 layer 的整理格式`：约定后续每个网络层章节的固定结构，方便复习和继续追加内容。
+- `Pooling Layers`：介绍池化层的降采样作用，重点说明 `nn.MaxPool2d` 和 `nn.AdaptiveMaxPool2d`。
 - 后续章节：每学习完一个常见 layer，就在本篇新增一个对应章节。
 
-## Layer 总览
+## Layers 总览
 
 在 PyTorch 中，常见网络层通常都定义在 `torch.nn` 下，例如 `nn.Linear`、`nn.Conv2d`、`nn.ReLU`、`nn.BatchNorm2d`、`nn.MaxPool2d`。这些 layer 本质上都是 `nn.Module` 或与 `Module` 体系配合使用的组件。
 
@@ -248,32 +248,124 @@ H_out = floor(
 
 这个展开式和感受野版本是等价的，只是感受野版本更容易看出 `dilation` 的作用。
 
-## 单个 layer 的整理格式
+## Pooling Layers
 
-后续每学习完一个 layer，就按下面结构整理成一个二级章节：
+池化层常用于对特征图做降采样：减少空间尺寸，保留局部区域中最重要或最有代表性的特征。池化层通常没有可学习参数，它更多是在控制特征图大小、扩大后续层的感受范围，并降低计算量。
+
+以最大池化为例，`2 x 2` 池化窗口每次覆盖一个局部区域，并取这个区域里的最大值：
 
 ```text
-## Layer 名称
+Input 4 x 4:
 
-### 作用
+2  2 | 7  3
+9  4 | 6  1
+-----+-----
+8  5 | 2  4
+3  1 | 2  6
 
-说明这个 layer 用来做什么，通常放在模型的什么位置。
+MaxPool2d(kernel_size=2, stride=2)
 
-### 常用参数
+Output 2 x 2:
 
-解释最常用、最容易写错的参数。
-
-### 输入输出形状
-
-写清楚输入张量和输出张量的维度变化。
-
-### 代码示例
-
-给出最小但完整的 PyTorch 示例。
-
-### 易错点
-
-整理维度、参数、训练推理差异等常见问题。
+9  7
+8  6
 ```
 
-这个格式不是为了限制内容，而是为了保证每个 layer 的笔记都能围绕“怎么用、输入输出是什么、哪里容易错”来展开。
+这个例子说明了池化层的核心作用：把每个局部窗口压缩成一个值，从而让特征图的高宽变小。最大池化保留的是局部区域中的最大响应，常用于保留最显著的边缘、纹理或激活特征。
+
+### MaxPool2d
+
+`nn.MaxPool2d` 是二维最大池化层，常用于 CNN 的卷积层之后。
+
+```python
+torch.nn.MaxPool2d(
+    kernel_size,
+    stride=None,
+    padding=0,
+    dilation=1,
+    return_indices=False,
+    ceil_mode=False,
+)
+```
+
+它的功能是：在输入特征图的每个通道上独立做二维最大池化。输入和输出通道数不会改变，变化的是特征图的高度和宽度。
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `kernel_size` | 池化窗口大小 | 每次在多大的局部区域中取最大值。可以是整数或二元组。 |
+| `stride` | 滑动步长 | 池化窗口每次移动多远。默认是 `kernel_size`，这和卷积层默认 `stride=1` 不同。 |
+| `padding` | 填充大小 | 在输入边缘补值。最大池化中补的是负无穷，避免补出来的值影响最大值选择。 |
+| `dilation` | 窗口内采样间隔 | 控制池化窗口内部元素之间的间隔，普通情况为 `1`。 |
+| `return_indices` | 是否返回最大值位置 | 为 `True` 时，除了池化结果，还会返回最大值在原窗口中的索引，常配合 `nn.MaxUnpool2d` 做反池化。 |
+| `ceil_mode` | 是否向上取整 | 默认 `False`，输出尺寸按向下取整计算；为 `True` 时，输出尺寸按向上取整处理，边界窗口可能被保留下来。 |
+
+常见写法：
+
+```python
+import torch
+import torch.nn as nn
+
+
+pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+x = torch.tensor([[
+    [[2., 2., 7., 3.],
+     [9., 4., 6., 1.],
+     [8., 5., 2., 4.],
+     [3., 1., 2., 6.]]
+]])  # [N, C, H, W] = [1, 1, 4, 4]
+
+y = pool(x)
+
+print(y)
+print(y.shape)  # torch.Size([1, 1, 2, 2])
+```
+
+输出形状通常写成：
+
+```text
+Input:  [N, C, H_in, W_in]
+Output: [N, C, H_out, W_out]
+```
+
+注意这里输出通道仍然是 `C`。池化层不像卷积层那样通过 `out_channels` 改变通道数，它只改变每个通道内部的空间尺寸。
+
+### AdaptiveMaxPool2d
+
+`nn.AdaptiveMaxPool2d` 是自适应最大池化层。
+
+```python
+torch.nn.AdaptiveMaxPool2d(
+    output_size,
+    return_indices=False,
+)
+```
+
+普通 `MaxPool2d` 是先指定 `kernel_size`、`stride`，再由这些参数算出输出高宽；自适应池化反过来，用户直接指定目标输出大小，PyTorch 自动决定每个池化区域如何划分。
+
+例如，不管输入特征图原来是 `8 x 9`、`10 x 10`，还是别的大小，下面这层都会把空间尺寸变成 `5 x 7`：
+
+```python
+pool = nn.AdaptiveMaxPool2d(output_size=(5, 7))
+
+x = torch.randn(1, 64, 8, 9)
+y = pool(x)
+
+print(y.shape)  # torch.Size([1, 64, 5, 7])
+```
+
+`output_size` 的常见写法：
+
+- `output_size=(H_out, W_out)`：指定输出高度和宽度。
+- `output_size=7`：输出为 `7 x 7`。
+- `output_size=(None, 7)`：高度保持和输入一致，宽度变成 `7`。
+
+`return_indices` 的含义和 `MaxPool2d` 类似：如果为 `True`，会同时返回最大值所在位置，主要用于后续需要配合 `MaxUnpool2d` 恢复空间位置的场景。
+
+自适应池化常用于模型尾部。例如分类模型中，前面的卷积网络可能接受不同尺寸的图片，但分类头通常希望输入固定大小。此时可以用：
+
+```python
+nn.AdaptiveMaxPool2d((1, 1))
+```
+
+把每个通道压缩成一个值，输出形状从 `[N, C, H, W]` 变成 `[N, C, 1, 1]`，再展平后接全连接层。
