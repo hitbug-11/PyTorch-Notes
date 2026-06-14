@@ -1,10 +1,11 @@
 # 07-module_layer
 
-本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layer 总览 -> 单个 layer 的作用、参数、输入输出形状、代码实践、易错点”的顺序持续补充。
+本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layer 总览 -> Convolutional Layers -> 后续常见 layer”的顺序持续补充。
 
 速查目录：
 
 - `Layer 总览`：说明 layer 和 `nn.Module` 的关系，以及学习单个 layer 时应关注哪些问题。
+- `Convolutional Layers`：介绍卷积层的基本思想，并重点剖析 `nn.Conv2d` 的参数、输入输出形状和输出尺寸公式。
 - `单个 layer 的整理格式`：约定后续每个网络层章节的固定结构，方便复习和继续追加内容。
 - 后续章节：每学习完一个常见 layer，就在本篇新增一个对应章节。
 
@@ -36,6 +37,208 @@ print(y.shape)
 ```
 
 这段代码中，`nn.Linear` 是一个具体 layer；它接收形状为 `[3, 4]` 的输入，把每个样本的 4 个特征映射成 2 个输出特征。
+
+## Convolutional Layers
+
+卷积层是 CNN 中最核心的网络层之一，常用于图像、特征图等具有空间结构的数据。它的基本思想是：用一个较小的卷积核在输入特征图上滑动，每次取一块局部区域，与卷积核中的权重逐元素相乘并求和，得到输出特征图上的一个位置。
+
+卷积适合处理图像，主要因为它同时利用了两个特点：
+
+- 局部连接：一个输出位置只关注输入中的一小块局部区域。
+- 权重共享：同一个卷积核会在整张特征图上重复使用，用同一组参数提取相似模式。
+
+卷积过程可以简化理解为：
+
+```mermaid
+flowchart LR
+    A["输入特征图<br/>[N, C_in, H_in, W_in]"] --> B["取一个局部感受野<br/>例如 3 x 3 区域"]
+    C["卷积核权重<br/>kernel_size"] --> D["逐元素相乘并求和"]
+    B --> D
+    D --> E["输出特征图中的一个值"]
+    E --> F["卷积核继续滑动<br/>形成完整输出特征图"]
+```
+
+本章节先重点学习二维卷积层 `nn.Conv2d`。它常用于处理图像输入或中间二维特征图，也是后续理解 CNN、ResNet、目标检测和语义分割模型的基础。
+
+### Conv2d 的基本写法
+
+`nn.Conv2d` 的常用函数形式如下：
+
+```python
+torch.nn.Conv2d(
+    in_channels,
+    out_channels,
+    kernel_size,
+    stride=1,
+    padding=0,
+    dilation=1,
+    groups=1,
+    bias=True,
+    padding_mode="zeros",
+)
+```
+
+它的主要功能是：对由多个二维平面组成的输入信号进行二维卷积。对图像来说，这里的“多个二维平面”通常就是多个通道，例如 RGB 图像有 3 个输入通道。
+
+### Conv2d 参数
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `in_channels` | 输入通道数 | 输入到这一层的特征图通道数。RGB 原图通常是 3，上一层卷积输出多少通道，这一层的 `in_channels` 就应是多少。 |
+| `out_channels` | 输出通道数 | 这一层输出的特征图通道数，也可以理解为卷积核组数。每个输出通道对应一组卷积核参数。 |
+| `kernel_size` | 卷积核大小 | 可以是整数，也可以是二元组。`3` 表示高宽都是 `3`，`(3, 5)` 表示卷积核高度为 `3`、宽度为 `5`。 |
+| `stride` | 步长 | 卷积核每次滑动的距离。`stride` 越大，输出特征图的高宽通常越小。 |
+| `padding` | 填充 | 在输入特征图四周补像素。常用于保留边缘信息，或控制输出特征图大小。可以是整数、二元组，也可以是 `"valid"`、`"same"` 这类字符串模式。 |
+| `dilation` | 空洞间隔 | 控制卷积核内部采样点之间的距离。`dilation=1` 是普通卷积，`dilation>1` 会扩大感受野。 |
+| `groups` | 分组卷积数量 | 控制输入通道和输出通道之间的连接方式。`groups=1` 表示普通卷积；更大的 `groups` 会把通道分组后分别卷积。使用时要求 `in_channels` 和 `out_channels` 都能被 `groups` 整除。 |
+| `bias` | 是否使用偏置 | 如果为 `True`，每个输出通道会额外学习一个偏置项。 |
+| `padding_mode` | 填充方式 | 决定填充出来的像素值如何产生，常见值有 `"zeros"`、`"reflect"`、`"replicate"`、`"circular"`。默认是 `"zeros"`，也就是补 0。 |
+
+几个参数可以传入单个整数，也可以传入二元组：
+
+```python
+nn.Conv2d(3, 16, kernel_size=3)
+nn.Conv2d(3, 16, kernel_size=(3, 5), stride=(2, 1), padding=(1, 2))
+```
+
+单个整数表示高和宽使用同一个值；二元组中第一个值用于高度方向，第二个值用于宽度方向。
+
+### dilation 和感受野
+
+感受野指的是：输出特征图上某一个位置，实际能看到输入特征图中的哪一块区域。
+
+在 `Conv2d` 中，`dilation` 控制卷积核内部采样点之间的间隔。普通 `3 x 3` 卷积的 `dilation=1`，采样点是连续的：
+
+```text
+x x x
+x x x
+x x x
+```
+
+如果 `kernel_size=3` 且 `dilation=2`，卷积核参数仍然只有 `3 x 3 = 9` 个，但相邻采样点之间隔了 1 个位置：
+
+```text
+x . x . x
+. . . . .
+x . x . x
+. . . . .
+x . x . x
+```
+
+这时单个输出位置实际覆盖输入中的 `5 x 5` 区域。也就是说，`dilation` 的作用是：在不增加卷积核参数量的情况下扩大感受野。
+
+把高度和宽度方向分别写开，感受野大小为：
+
+$$
+R_h = dilation[0] \times (kernel\_size[0] - 1) + 1
+$$
+
+$$
+R_w = dilation[1] \times (kernel\_size[1] - 1) + 1
+$$
+
+其中：
+
+- `R_h`：高度方向上的实际感受野。
+- `R_w`：宽度方向上的实际感受野。
+- 当 `dilation=1` 时，感受野大小就等于普通卷积核大小。
+- 当 `dilation>1` 时，感受野会大于卷积核参数矩阵本身。
+
+例如：
+
+```text
+kernel_size = 3
+dilation = 2
+
+R = 2 * (3 - 1) + 1 = 5
+```
+
+所以这个卷积核参数看起来是 `3 x 3`，但实际覆盖输入上的 `5 x 5` 区域。
+
+### Conv2d 输入输出形状
+
+`Conv2d` 的常见输入张量形状是：
+
+```text
+Input:  [N, C_in, H_in, W_in]
+Output: [N, C_out, H_out, W_out]
+```
+
+其中：
+
+- `N`：batch size，一次输入多少张图或多少个样本。
+- `C_in`：输入通道数，对应 `in_channels`。
+- `H_in`：输入特征图高度。
+- `W_in`：输入特征图宽度。
+- `C_out`：输出通道数，对应 `out_channels`。
+- `H_out`：输出特征图高度。
+- `W_out`：输出特征图宽度。
+
+输出通道数由 `out_channels` 直接决定；输出高宽由输入大小、`padding`、感受野和 `stride` 共同决定。
+
+先定义感受野：
+
+$$
+R_h = dilation[0] \times (kernel\_size[0] - 1) + 1
+$$
+
+$$
+R_w = dilation[1] \times (kernel\_size[1] - 1) + 1
+$$
+
+则输出高宽可以写成：
+
+$$
+H_{out} =
+\left\lfloor
+\frac{H_{in} + 2 \times padding[0] - R_h}{stride[0]} + 1
+\right\rfloor
+$$
+
+$$
+W_{out} =
+\left\lfloor
+\frac{W_{in} + 2 \times padding[1] - R_w}{stride[1]} + 1
+\right\rfloor
+$$
+
+这里的 $\lfloor \cdot \rfloor$ 表示向下取整。也就是说，如果卷积核滑动到最后时，剩余区域不够完整覆盖一个感受野，PyTorch 不会额外计算一次输出。
+
+公式可以这样理解：
+
+```text
+填充后的输入大小 = 输入大小 + 2 * padding
+可滑动范围 = 填充后的输入大小 - 感受野大小
+可滑动次数 = 可滑动范围 / stride
+输出大小 = floor(可滑动次数 + 1)
+```
+
+以高度方向为例：
+
+```text
+H_out = floor((H_in + 2 * padding[0] - R_h) / stride[0] + 1)
+```
+
+宽度方向同理。
+
+如果把感受野 `R_h` 展开：
+
+```text
+R_h = dilation[0] * (kernel_size[0] - 1) + 1
+```
+
+就能得到 PyTorch 文档中更常见的形式：
+
+```text
+H_out = floor(
+    (H_in + 2 * padding[0]
+     - dilation[0] * (kernel_size[0] - 1)
+     - 1) / stride[0]
+    + 1
+)
+```
+
+这个展开式和感受野版本是等价的，只是感受野版本更容易看出 `dilation` 的作用。
 
 ## 单个 layer 的整理格式
 
