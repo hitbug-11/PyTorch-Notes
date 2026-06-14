@@ -1,6 +1,6 @@
 # 07-module_layers
 
-本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layers 总览 -> Convolutional Layers -> Pooling Layers -> Normalization Layers -> Dropout Layers -> Non-linear Layers -> 后续常见 layers”的顺序持续补充。
+本篇整理 PyTorch 中常见的 `nn` 网络层，按“Layers 总览 -> Convolutional Layers -> Pooling Layers -> Normalization Layers -> Dropout Layers -> Non-linear Layers -> 小结”的顺序组织。阅读时可以先看总览建立 layer 的学习框架，再按具体层类型理解参数、输入输出形状、训练/推理行为和典型用法。
 
 速查目录：
 
@@ -10,7 +10,7 @@
 - `Normalization Layers`：介绍常见归一化层，重点比较 `BatchNorm`、`LayerNorm`、`InstanceNorm` 和 `GroupNorm` 的统计范围、作用差异、参数和应用场景。
 - `Dropout Layers`：介绍 Dropout 的正则化作用，重点说明 `nn.Dropout` 和 `nn.AlphaDropout` 的参数、训练/推理差异和使用示例。
 - `Non-linear Layers`：介绍非线性层的意义，说明常见激活函数和 Softmax 类函数的参数、特点和使用示例。
-- 后续章节：每学习完一个常见 layer，就在本篇新增一个对应章节。
+- `小结`：从形状、参数、训练行为和使用场景角度归纳本篇内容。
 
 ## Layers 总览
 
@@ -61,7 +61,7 @@ flowchart LR
     E --> F["卷积核继续滑动<br/>形成完整输出特征图"]
 ```
 
-本章节先重点学习二维卷积层 `nn.Conv2d`。它常用于处理图像输入或中间二维特征图，也是后续理解 CNN、ResNet、目标检测和语义分割模型的基础。
+本节重点学习二维卷积层 `nn.Conv2d`。它常用于处理图像输入或中间二维特征图，也是后续理解 CNN、ResNet、目标检测和语义分割模型的基础。
 
 ### Conv2d
 
@@ -1262,7 +1262,18 @@ criterion = nn.CrossEntropyLoss()
 
 这种写法内部已经完成了 `LogSoftmax + NLLLoss`。
 
-参考资料：
+## 小结
+
+本篇围绕常见 `nn` layer 梳理了五类基础层。复习时可以抓住四条主线：
+
+- 先看输入输出形状。`Conv2d` 会改变通道数和空间尺寸；`Pooling` 主要改变空间尺寸；`Normalization`、`Dropout` 和大多数普通激活函数通常保持形状不变。
+- 再看参数是否可学习。`Conv2d` 有卷积核权重和可选偏置；多数池化、Dropout 和普通激活函数没有可学习参数；归一化层通常有可学习的缩放和平移参数。
+- 区分训练和推理行为。`BatchNorm` 训练时使用 batch 统计量、推理时使用 running statistics；`Dropout` 训练时随机丢弃并缩放，推理时是恒等映射。
+- 结合场景选 layer。CNN 中常见 `Conv2d + Normalization + Activation + Pooling`；小 batch 视觉任务可考虑 `GroupNorm`；全连接分类头可加入 `Dropout`；分类输出通常直接给 `CrossEntropyLoss` 原始 logits，而不是手动先做 `Softmax`。
+
+学习具体 layer 时，不建议只背函数名。更可靠的方式是同时确认：输入张量约定、关键参数含义、输出形状公式或规则、是否依赖 `train()` / `eval()` 模式，以及它通常和哪些 layer 或 loss 搭配使用。
+
+## 参考资料
 
 - [Normalization layers 差异图示参考](https://zhuanlan.zhihu.com/p/480250123)
 - [PyTorch BatchNorm2d](https://pytorch.org/docs/stable/generated/torch.nn.BatchNorm2d.html)
