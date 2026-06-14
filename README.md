@@ -16,6 +16,7 @@ PyTorch-Notes/
 │   ├── 04-module_overview.md
 │   ├── 05-module_parameter.md
 │   ├── 06-module_containers.md
+│   ├── 07-module_layer.md
 │   └── assets/
 └── .gitignore
 ```
@@ -34,6 +35,7 @@ PyTorch-Notes/
 | [04-module_overview](notes/04-module_overview.md) | 介绍 `nn.Module` 的模型组织方式、子模块注册、TinnyCNN 示例和前向调用机制。 |
 | [05-module_parameter](notes/05-module_parameter.md) | 介绍 `Parameter`、`_parameters`、参数容器、`parameters()`、优化器参数传递和模型参数打印方法。 |
 | [06-module_containers](notes/06-module_containers.md) | 介绍 `Sequential`、`ModuleList`、`ModuleDict` 的使用场景、注册机制、前向调用方式和 AlexNet 中的容器应用。 |
+| [07-module_layer](notes/07-module_layer.md) | 用于持续整理 PyTorch 常见 `nn` 网络层，按作用、参数、输入输出形状、代码实践和易错点逐章补充。 |
 
 ## 内容范围
 
