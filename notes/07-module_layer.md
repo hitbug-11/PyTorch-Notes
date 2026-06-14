@@ -1,6 +1,6 @@
 # 07-module_layers
 
-本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layers 总览 -> Convolutional Layers -> Pooling Layers -> Normalization Layers -> Dropout Layers -> 后续常见 layers”的顺序持续补充。
+本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layers 总览 -> Convolutional Layers -> Pooling Layers -> Normalization Layers -> Dropout Layers -> Non-linear Layers -> 后续常见 layers”的顺序持续补充。
 
 速查目录：
 
@@ -9,6 +9,7 @@
 - `Pooling Layers`：介绍池化层的降采样作用，重点说明 `nn.MaxPool2d` 和 `nn.AdaptiveMaxPool2d`。
 - `Normalization Layers`：介绍常见归一化层，重点比较 `BatchNorm`、`LayerNorm`、`InstanceNorm` 和 `GroupNorm` 的统计范围、作用差异、参数和应用场景。
 - `Dropout Layers`：介绍 Dropout 的正则化作用，重点说明 `nn.Dropout` 和 `nn.AlphaDropout` 的参数、训练/推理差异和使用示例。
+- `Non-linear Layers`：介绍非线性层的意义，说明常见激活函数和 Softmax 类函数的参数、特点和使用示例。
 - 后续章节：每学习完一个常见 layer，就在本篇新增一个对应章节。
 
 ## Layers 总览
@@ -849,6 +850,322 @@ print("eval same as SELU only:", torch.allclose(y_eval, nn.SELU()(x)))
 
 如果模型不是使用 `SELU` 作为主要激活函数，通常优先使用普通 `nn.Dropout`；只有在明确构建自归一化网络时，再考虑 `nn.AlphaDropout`。
 
+## Non-linear Layers
+
+Non-linear Layers 通常指模型中的非线性变换层，最常见的是各种 activation function。它们本身通常不包含可学习参数，但对神经网络的表达能力非常关键。
+
+如果模型里只有线性层，即使堆叠很多层，本质上仍然只能表示一个线性变换。以不考虑 bias 的情况为例：
+
+```text
+y = W3(W2(W1x))
+  = (W3 W2 W1)x
+  = Wx
+```
+
+多个矩阵连乘仍然等价于一个新的矩阵 `W`。即使考虑 bias，多层 `Linear` 的组合也仍然是仿射变换：
+
+```text
+y = W2(W1x + b1) + b2
+  = (W2W1)x + (W2b1 + b2)
+```
+
+因此，如果没有非线性函数，哪怕堆叠 1 亿层 `Linear`，最终也只能等价于 1 层线性或仿射网络。非线性层的意义就在于：打破线性叠加的限制，让模型能够拟合复杂的非线性关系。
+
+PyTorch 中常见 Non-linear Layers 可以粗略分为两类：
+
+| 类别 | 作用 | 常见函数 |
+| --- | --- | --- |
+| 普通激活函数 | 对每个元素独立做非线性变换，增强模型表达能力。 | `ReLU`、`LeakyReLU`、`Sigmoid`、`Tanh`、`GELU`、`SiLU` |
+| Softmax 类函数 | 沿指定维度把 logits 转成概率分布或 log-probability，常用于分类输出。 | `Softmax`、`LogSoftmax` |
+
+### 普通激活函数
+
+普通激活函数通常接在 `Linear` 或 `Conv2d` 后面，用来给模型引入非线性。它们一般保持输入输出形状不变：
+
+```text
+Input:  任意形状 (*)
+Output: 与输入形状相同 (*)
+```
+
+常见函数如下。
+
+#### ReLU
+
+`ReLU` 是最常用的激活函数之一，会把负数截断为 0，正数保持不变：
+
+```text
+ReLU(x) = max(0, x)
+```
+
+参数列表：
+
+```python
+torch.nn.ReLU(inplace=False)
+```
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `inplace` | 是否原地修改 | 为 `True` 时直接修改输入张量；通常保持默认 `False`，避免影响后续计算或反向传播。 |
+
+使用示例：
+
+```python
+import torch
+import torch.nn as nn
+
+
+relu = nn.ReLU()
+x = torch.tensor([-2.0, -0.5, 0.0, 1.0, 3.0])
+y = relu(x)
+
+print(y)  # tensor([0., 0., 0., 1., 3.])
+```
+
+在网络中常见写法：
+
+```python
+block = nn.Sequential(
+    nn.Linear(128, 64),
+    nn.ReLU(),
+)
+```
+
+#### LeakyReLU
+
+`LeakyReLU` 是 `ReLU` 的变体。它不会把负数完全置为 0，而是给负数保留一个很小的斜率：
+
+```text
+LeakyReLU(x) = x, x >= 0
+LeakyReLU(x) = negative_slope * x, x < 0
+```
+
+参数列表：
+
+```python
+torch.nn.LeakyReLU(
+    negative_slope=0.01,
+    inplace=False,
+)
+```
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `negative_slope` | 负半轴斜率 | 输入为负数时保留多少比例，默认 `0.01`。 |
+| `inplace` | 是否原地修改 | 为 `True` 时直接修改输入张量，通常保持默认 `False`。 |
+
+使用示例：
+
+```python
+act = nn.LeakyReLU(negative_slope=0.1)
+x = torch.tensor([-2.0, -0.5, 0.0, 1.0])
+y = act(x)
+
+print(y)  # tensor([-0.2000, -0.0500, 0.0000, 1.0000])
+```
+
+`LeakyReLU` 常用于希望缓解 ReLU 负半轴梯度为 0 问题的场景。
+
+#### Sigmoid
+
+`Sigmoid` 会把输入压缩到 `(0, 1)` 区间：
+
+```text
+Sigmoid(x) = 1 / (1 + exp(-x))
+```
+
+参数列表：
+
+```python
+torch.nn.Sigmoid()
+```
+
+`Sigmoid` 没有需要手动设置的核心参数。
+
+使用示例：
+
+```python
+sigmoid = nn.Sigmoid()
+x = torch.tensor([-2.0, 0.0, 2.0])
+y = sigmoid(x)
+
+print(y)  # tensor([0.1192, 0.5000, 0.8808])
+```
+
+`Sigmoid` 常用于二分类输出概率，但如果使用 `nn.BCEWithLogitsLoss`，最后一层通常不需要手动加 `Sigmoid`，因为这个 loss 内部已经包含了 sigmoid 计算。
+
+#### Tanh
+
+`Tanh` 会把输入压缩到 `(-1, 1)` 区间：
+
+```text
+Tanh(x) = (exp(x) - exp(-x)) / (exp(x) + exp(-x))
+```
+
+参数列表：
+
+```python
+torch.nn.Tanh()
+```
+
+`Tanh` 没有需要手动设置的核心参数。
+
+使用示例：
+
+```python
+tanh = nn.Tanh()
+x = torch.tensor([-2.0, 0.0, 2.0])
+y = tanh(x)
+
+print(y)  # tensor([-0.9640, 0.0000, 0.9640])
+```
+
+`Tanh` 输出以 0 为中心，早期 RNN 中较常见，但在很深的网络中也可能遇到梯度饱和问题。
+
+#### GELU
+
+`GELU` 是 Transformer 中非常常见的激活函数。它不是简单地按正负截断，而是根据输入大小进行平滑门控：
+
+```python
+torch.nn.GELU(approximate="none")
+```
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `approximate` | 近似计算方式 | 默认 `"none"` 使用精确形式；可设为 `"tanh"` 使用 tanh 近似，常见于一些 Transformer 实现。 |
+
+使用示例：
+
+```python
+gelu = nn.GELU()
+x = torch.tensor([-2.0, 0.0, 2.0])
+y = gelu(x)
+
+print(y)  # 大约 tensor([-0.0455, 0.0000, 1.9545])
+```
+
+在 Transformer MLP 中常见写法：
+
+```python
+ffn = nn.Sequential(
+    nn.Linear(768, 3072),
+    nn.GELU(),
+    nn.Linear(3072, 768),
+)
+```
+
+#### SiLU
+
+`SiLU` 也叫 Swish，形式为：
+
+```text
+SiLU(x) = x * sigmoid(x)
+```
+
+参数列表：
+
+```python
+torch.nn.SiLU(inplace=False)
+```
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `inplace` | 是否原地修改 | 为 `True` 时直接修改输入张量，通常保持默认 `False`。 |
+
+使用示例：
+
+```python
+silu = nn.SiLU()
+x = torch.tensor([-2.0, 0.0, 2.0])
+y = silu(x)
+
+print(y)  # 大约 tensor([-0.2384, 0.0000, 1.7616])
+```
+
+`SiLU` 在一些现代 CNN 和检测模型中很常见，例如 EfficientNet、YOLO 系列中的部分结构。
+
+### Softmax 类函数
+
+Softmax 类函数不是简单逐元素独立变换，而是沿某个维度把一组 logits 转成归一化结果。因此最关键的参数是 `dim`。
+
+#### Softmax
+
+`Softmax` 会把指定维度上的数值转换成概率分布。输出值都在 `(0, 1)` 之间，并且在 `dim` 维度上求和为 1：
+
+```python
+torch.nn.Softmax(dim=None)
+```
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `dim` | 归一化维度 | 指定沿哪个维度计算 Softmax。分类任务中，如果 logits 形状是 `[N, num_classes]`，通常写 `dim=1`。不建议省略。 |
+
+使用示例：
+
+```python
+softmax = nn.Softmax(dim=1)
+
+logits = torch.tensor([
+    [2.0, 1.0, 0.1],
+    [0.5, 1.5, 2.0],
+])
+
+probs = softmax(logits)
+
+print(probs)
+print(probs.sum(dim=1))  # tensor([1., 1.])
+```
+
+注意：多分类训练时，如果使用 `nn.CrossEntropyLoss`，模型最后一层通常直接输出 logits，不要先手动加 `Softmax`，因为 `CrossEntropyLoss` 内部已经包含了 `LogSoftmax` 和 `NLLLoss`。
+
+#### LogSoftmax
+
+`LogSoftmax` 计算的是 `log(Softmax(x))`，输出是 log-probability。它比先做 `Softmax` 再取 `log` 更稳定。
+
+参数列表：
+
+```python
+torch.nn.LogSoftmax(dim=None)
+```
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `dim` | 归一化维度 | 指定沿哪个维度计算 LogSoftmax。分类任务中 logits 形状为 `[N, num_classes]` 时通常写 `dim=1`。 |
+
+使用示例：
+
+```python
+log_softmax = nn.LogSoftmax(dim=1)
+
+logits = torch.tensor([
+    [2.0, 1.0, 0.1],
+    [0.5, 1.5, 2.0],
+])
+
+log_probs = log_softmax(logits)
+
+print(log_probs)
+print(log_probs.exp().sum(dim=1))  # tensor([1., 1.])
+```
+
+`LogSoftmax` 常和 `nn.NLLLoss` 搭配：
+
+```python
+model = nn.Sequential(
+    nn.Linear(128, 10),
+    nn.LogSoftmax(dim=1),
+)
+
+criterion = nn.NLLLoss()
+```
+
+实际训练中，更常见的简洁写法是让模型输出 logits，然后直接使用：
+
+```python
+criterion = nn.CrossEntropyLoss()
+```
+
+这种写法内部已经完成了 `LogSoftmax + NLLLoss`。
+
 参考资料：
 
 - [Normalization layers 差异图示参考](https://zhuanlan.zhihu.com/p/480250123)
@@ -858,3 +1175,6 @@ print("eval same as SELU only:", torch.allclose(y_eval, nn.SELU()(x)))
 - [PyTorch GroupNorm](https://pytorch.org/docs/stable/generated/torch.nn.GroupNorm.html)
 - [PyTorch Dropout](https://docs.pytorch.org/docs/2.12/generated/torch.nn.Dropout.html)
 - [PyTorch AlphaDropout](https://docs.pytorch.org/docs/2.12/generated/torch.nn.AlphaDropout.html)
+- [PyTorch Non-linear Activations](https://docs.pytorch.org/docs/2.12/nn.html#non-linear-activations-weighted-sum-nonlinearity)
+- [PyTorch Softmax](https://docs.pytorch.org/docs/2.12/generated/torch.nn.Softmax.html)
+- [PyTorch LogSoftmax](https://docs.pytorch.org/docs/2.12/generated/torch.nn.LogSoftmax.html)
