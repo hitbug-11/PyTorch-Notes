@@ -500,8 +500,18 @@ torch.save({
 保存参数后，最常见的载入方式是：
 
 ```python
-state_dict = torch.load("tinnycnn.pth", map_location="cpu", weights_only=True)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+model = TinnyCNN(cls_num=2).to(device)
+
+state_dict = torch.load(
+    "tinnycnn.pth",
+    map_location=device,
+    weights_only=True,
+)
+
 model.load_state_dict(state_dict)
+model.eval()
 ```
 
 这里要区分两个步骤：
@@ -529,16 +539,22 @@ class TinnyCNN(nn.Module):
         return x
 
 
-model = TinnyCNN(cls_num=2)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+model = TinnyCNN(cls_num=2).to(device)
 
 state_dict = torch.load(
     "tinnycnn.pth",
-    map_location="cpu",
+    map_location=device,
     weights_only=True,
 )
 
 model.load_state_dict(state_dict)
 model.eval()
+
+x = torch.randn(4, 1, 8, 8).to(device)
+with torch.no_grad():
+    output = model(x)
 ```
 
 这个例子中，`tinnycnn.pth` 保存的是：
@@ -554,7 +570,7 @@ torch.save(model.state_dict(), "tinnycnn.pth")
 | 参数 | 含义 | 说明 |
 | --- | --- | --- |
 | `f` | 文件路径或文件对象 | 要读取的 `.pth`、`.pt` 等文件。 |
-| `map_location` | 设备映射 | 控制参数载入到哪里。常用 `"cpu"`，可以避免在没有 GPU 或 GPU 编号变化时加载失败。 |
+| `map_location` | 设备映射 | 控制参数载入到哪里。训练或推理时常用 `map_location=device` 直接映射到当前设备；排查兼容问题时也常用 `"cpu"` 先载入到 CPU。 |
 | `weights_only` | 是否只按权重安全载入 | 推荐载入 `state_dict` 时显式写 `weights_only=True`，减少反序列化不可信对象的风险。 |
 
 `load_state_dict()` 常用参数：
@@ -605,8 +621,10 @@ print(incompatible_keys.unexpected_keys)
 这种方式常用于迁移学习。例如只载入卷积特征提取层，重新训练分类头：
 
 ```python
-model = TinnyCNN(cls_num=10)
-state_dict = torch.load("tinnycnn.pth", map_location="cpu", weights_only=True)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+model = TinnyCNN(cls_num=10).to(device)
+state_dict = torch.load("tinnycnn.pth", map_location=device, weights_only=True)
 
 current_state = model.state_dict()
 
@@ -621,9 +639,32 @@ model.load_state_dict(filtered_state, strict=False)
 
 这里通过参数名和形状筛选，只把能对上的参数载入当前模型。分类头形状不一致的参数会被跳过，由当前模型重新初始化。
 
-### 设备相关注意事项
+### 载入到 GPU
 
-如果参数是在 GPU 上保存的，但当前环境只有 CPU，直接 `torch.load()` 可能会尝试把 Tensor 放回原来的 GPU。更稳妥的写法是：
+如果要在 GPU 上推理或继续训练，常见写法是先确定 `device`，再把模型和载入的参数都放到同一个设备上：
+
+```python
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+model = TinnyCNN(cls_num=2).to(device)
+
+state_dict = torch.load(
+    "tinnycnn.pth",
+    map_location=device,
+    weights_only=True,
+)
+
+model.load_state_dict(state_dict)
+model.eval()
+
+x = torch.randn(4, 1, 8, 8).to(device)
+with torch.no_grad():
+    output = model(x)
+```
+
+需要注意：模型参数和输入数据必须在同一个设备上。也就是说，模型 `.to(device)` 后，输入 batch 也要 `.to(device)`，否则 forward 时会出现 CPU/GPU 设备不一致的错误。
+
+如果不确定 checkpoint 原来保存在哪个设备，或者当前机器没有 GPU，可以先载入到 CPU：
 
 ```python
 state_dict = torch.load(
@@ -631,26 +672,25 @@ state_dict = torch.load(
     map_location="cpu",
     weights_only=True,
 )
+
 model.load_state_dict(state_dict)
 ```
 
-如果后续要在 GPU 上推理或训练，可以在载入后再移动模型：
-
-```python
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-model.load_state_dict(state_dict)
-model.to(device)
-```
+这种 CPU 载入方式更稳妥，适合跨机器、跨设备迁移；之后如果需要 GPU，再执行 `model.to(device)`。
 
 ### 载入训练检查点
 
 如果载入的是“参数如何保存”一节中的 checkpoint 字典，需要先取出对应字段：
 
 ```python
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+model = TinnyCNN(cls_num=2).to(device)
+optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
 checkpoint = torch.load(
     "checkpoint.pth",
-    map_location="cpu",
+    map_location=device,
     weights_only=True,
 )
 
@@ -714,7 +754,7 @@ optimizer.step()
 - `model.parameters()` 会递归遍历整个 `Module` 树，逐层取出 `_parameters` 中的参数。
 - 打印参数时，最常用的是 `print(model)`、`named_parameters()` 和 `state_dict().keys()`。
 - 保存参数时，推荐保存 `model.state_dict()`；如果要继续训练，则保存包含模型参数、优化器状态和 epoch 的 checkpoint 字典。
-- 载入参数时，用 `torch.load()` 读取文件，再用 `model.load_state_dict()` 恢复到同结构模型中。
+- 载入参数时，用 `torch.load(..., map_location=device)` 读取到目标设备，再用 `model.load_state_dict()` 恢复到同结构模型中。
 - 载入参数前要先创建模型结构；参数文件只保存数值，不保存模型的 `forward()` 逻辑。
 - 优化器通过 `model.parameters()` 获取需要更新的参数；`lr`、`momentum`、`weight_decay` 等是控制更新方式的超参数。
 
