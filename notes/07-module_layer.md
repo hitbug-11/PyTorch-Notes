@@ -1,6 +1,6 @@
 # 07-module_layers
 
-本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layers 总览 -> Convolutional Layers -> Pooling Layers -> Normalization Layers -> 后续常见 layers”的顺序持续补充。
+本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layers 总览 -> Convolutional Layers -> Pooling Layers -> Normalization Layers -> Dropout Layers -> 后续常见 layers”的顺序持续补充。
 
 速查目录：
 
@@ -8,6 +8,7 @@
 - `Convolutional Layers`：介绍卷积层的基本思想，并重点剖析 `nn.Conv2d` 的参数、输入输出形状和输出尺寸公式。
 - `Pooling Layers`：介绍池化层的降采样作用，重点说明 `nn.MaxPool2d` 和 `nn.AdaptiveMaxPool2d`。
 - `Normalization Layers`：介绍常见归一化层，重点比较 `BatchNorm`、`LayerNorm`、`InstanceNorm` 和 `GroupNorm` 的统计范围、作用差异、参数和应用场景。
+- `Dropout Layers`：介绍 Dropout 的正则化作用，重点说明 `nn.Dropout` 和 `nn.AlphaDropout` 的参数、训练/推理差异和使用示例。
 - 后续章节：每学习完一个常见 layer，就在本篇新增一个对应章节。
 
 ## Layers 总览
@@ -685,6 +686,169 @@ gn_like_ln = nn.GroupNorm(num_groups=1, num_channels=32)
 gn_like_in = nn.GroupNorm(num_groups=32, num_channels=32)
 ```
 
+## Dropout Layers
+
+Dropout Layers 是一类常见的正则化层。它的核心思想是：在训练阶段随机把一部分输入激活置为 0，让模型不能过度依赖某几个固定神经元，从而降低过拟合风险。
+
+需要注意两点：
+
+- Dropout 常用于全连接分类头中，通常放在某个 `nn.Linear` 层之前，用来随机丢弃送入该线性层的输入特征；也常见于 `Linear -> ReLU -> Dropout -> Linear` 这类结构中，本质上都是在下一层线性映射前打乱部分激活。
+- Dropout 执行后，参与当前 forward 的非零激活数量会减少，所以单次计算里的数据分布会发生变化。但 PyTorch 使用的是 inverted dropout：训练时会把保留下来的激活按 `1 / (1 - p)` 放大，使输出的期望尺度尽量保持不变；推理时 Dropout 是恒等映射，不再随机丢弃。
+
+Dropout 不会永久删除模型结构中的神经元。它只是训练时对当前 batch 的激活值做随机屏蔽，下一次 forward 会重新采样不同的屏蔽位置。
+
+### Dropout
+
+`nn.Dropout` 的常用写法如下：
+
+```python
+torch.nn.Dropout(
+    p=0.5,
+    inplace=False,
+)
+```
+
+参数说明：
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `p` | 丢弃概率 | 每个输入元素被置为 0 的概率，默认 `0.5`。注意它不是保留概率。 |
+| `inplace` | 是否原地修改 | 为 `True` 时直接在原输入张量上修改，节省少量内存，但容易影响后续还需要使用原张量的计算，通常保持默认 `False`。 |
+
+输入输出形状：
+
+```text
+Input:  任意形状 (*)
+Output: 与输入形状相同 (*)
+```
+
+也就是说，Dropout 不改变张量形状，只改变其中一部分元素的值。
+
+使用示范：
+
+```python
+import torch
+import torch.nn as nn
+
+
+class Net(nn.Module):
+    def __init__(self, neural_num, d_prob=0.5):
+        super().__init__()
+        self.linears = nn.Sequential(
+            nn.Dropout(d_prob),
+            nn.Linear(neural_num, 1, bias=False),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.linears(x)
+
+
+input_num = 10000
+x = torch.ones((input_num,), dtype=torch.float32)
+
+net = Net(input_num, d_prob=0.5)
+
+with torch.no_grad():
+    net.linears[1].weight.fill_(1.0)
+
+net.train()
+y = net(x)
+print("output in training mode", y)
+
+net.eval()
+y = net(x)
+print("output in eval mode", y)
+```
+
+可能输出：
+
+```text
+output in training mode tensor([10042.], grad_fn=<ReluBackward0>)
+output in eval mode tensor([10000.], grad_fn=<ReluBackward0>)
+```
+
+这段代码里：
+
+- 输入 `x` 是长度为 `10000` 的全 1 向量。
+- `nn.Dropout(p=0.5)` 在训练模式下大约会随机丢弃一半元素。
+- 没有被丢弃的元素会被放大为 `1 / (1 - 0.5) = 2`。
+- 后面的 `nn.Linear` 权重全部设为 1，所以输出就是 Dropout 后所有元素的求和。
+
+如果这一次随机保留了 `5021` 个元素，那么训练模式输出就是：
+
+```text
+5021 * 2 = 10042
+```
+
+这个值不一定每次都是 `10042`，因为 Dropout 每次 forward 都会重新随机采样。理论上它会围绕 `10000` 波动。
+
+在 `eval` 模式下，Dropout 不再随机丢弃元素，也不会再做放大，直接输出原输入。因此全 1 向量经过权重全 1 的线性层后就是：
+
+```text
+10000 * 1 = 10000
+```
+
+### AlphaDropout
+
+`nn.AlphaDropout` 是 Dropout 的一个扩展，主要用于和 `SELU` 激活函数配合。它的目标不是简单把元素置 0，而是在随机屏蔽元素后，通过特定的缩放和平移尽量保持输入的均值和标准差，从而维持自归一化网络的性质。
+
+它的常用写法如下：
+
+```python
+torch.nn.AlphaDropout(
+    p=0.5,
+    inplace=False,
+)
+```
+
+参数说明：
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `p` | 丢弃概率 | 每个输入元素被 drop 的概率，默认 `0.5`。 |
+| `inplace` | 是否原地修改 | 为 `True` 时直接修改输入张量，通常保持默认 `False`。 |
+
+`AlphaDropout` 的输入输出形状也完全一致：
+
+```text
+Input:  任意形状 (*)
+Output: 与输入形状相同 (*)
+```
+
+使用示范：
+
+```python
+import torch
+import torch.nn as nn
+
+
+x = torch.randn(10000)
+
+layer = nn.Sequential(
+    nn.SELU(),
+    nn.AlphaDropout(p=0.2),
+)
+
+layer.train()
+y_train = layer(x)
+
+layer.eval()
+y_eval = layer(x)
+
+print("input mean/std:", x.mean().item(), x.std().item())
+print("train mean/std:", y_train.mean().item(), y_train.std().item())
+print("eval same as SELU only:", torch.allclose(y_eval, nn.SELU()(x)))
+```
+
+这段代码说明：
+
+- 训练模式下，`AlphaDropout` 会随机处理一部分元素，但不是普通 Dropout 那样简单置 0。
+- 它会尽量保持输出的均值和标准差，因此适合配合 `SELU` 构建 self-normalizing neural networks。
+- 推理模式下，`AlphaDropout` 和普通 Dropout 一样是恒等映射，因此 `nn.Sequential(nn.SELU(), nn.AlphaDropout())` 在 `eval` 模式下等价于只执行 `SELU`。
+
+如果模型不是使用 `SELU` 作为主要激活函数，通常优先使用普通 `nn.Dropout`；只有在明确构建自归一化网络时，再考虑 `nn.AlphaDropout`。
+
 参考资料：
 
 - [Normalization layers 差异图示参考](https://zhuanlan.zhihu.com/p/480250123)
@@ -692,3 +856,5 @@ gn_like_in = nn.GroupNorm(num_groups=32, num_channels=32)
 - [PyTorch LayerNorm](https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html)
 - [PyTorch InstanceNorm2d](https://pytorch.org/docs/stable/generated/torch.nn.InstanceNorm2d.html)
 - [PyTorch GroupNorm](https://pytorch.org/docs/stable/generated/torch.nn.GroupNorm.html)
+- [PyTorch Dropout](https://docs.pytorch.org/docs/2.12/generated/torch.nn.Dropout.html)
+- [PyTorch AlphaDropout](https://docs.pytorch.org/docs/2.12/generated/torch.nn.AlphaDropout.html)
