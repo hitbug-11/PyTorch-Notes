@@ -907,6 +907,8 @@ x, & x \ge 0
 \end{cases}
 $$
 
+![ReLU activation function](assets/activation-relu.svg)
+
 参数列表：
 
 ```python
@@ -954,6 +956,8 @@ $$
 
 其中 $\alpha$ 对应参数 `negative_slope`。
 
+![LeakyReLU activation function](assets/activation-leaky-relu.svg)
+
 参数列表：
 
 ```python
@@ -988,6 +992,8 @@ $$
 \operatorname{Sigmoid}(x) = \sigma(x) = \frac{1}{1 + e^{-x}}
 $$
 
+![Sigmoid activation function](assets/activation-sigmoid.svg)
+
 参数列表：
 
 ```python
@@ -1015,6 +1021,8 @@ print(y)  # tensor([0.1192, 0.5000, 0.8808])
 $$
 \tanh(x) = \frac{e^x - e^{-x}}{e^x + e^{-x}}
 $$
+
+![Tanh activation function](assets/activation-tanh.svg)
 
 参数列表：
 
@@ -1068,6 +1076,8 @@ $$
 \right)
 $$
 
+![GELU activation function](assets/activation-gelu.svg)
+
 ```python
 torch.nn.GELU(approximate="none")
 ```
@@ -1110,6 +1120,8 @@ $$
 \operatorname{SiLU}(x) = \frac{x}{1 + e^{-x}}
 $$
 
+![SiLU activation function](assets/activation-silu.svg)
+
 参数列表：
 
 ```python
@@ -1147,6 +1159,10 @@ $$
 =
 \frac{e^{x_i}}{\sum_{j=1}^{K} e^{x_j}}
 $$
+
+二分类场景下，如果令横轴为两个类别的 logit 差值 $d = z_1 - z_0$，类别 1 的 Softmax 概率曲线如下：
+
+![Softmax binary activation function](assets/activation-softmax-binary.svg)
 
 ```python
 torch.nn.Softmax(dim=None)
@@ -1196,6 +1212,10 @@ $$
 =
 x_i - \log\left(\sum_{j=1}^{K} e^{x_j}\right)
 $$
+
+二分类场景下，类别 1 的 LogSoftmax 曲线如下：
+
+![LogSoftmax binary activation function](assets/activation-logsoftmax-binary.svg)
 
 参数列表：
 
