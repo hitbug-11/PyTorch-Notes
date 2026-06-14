@@ -334,7 +334,7 @@ Output: [N, C, H_out, W_out]
 
 ### AdaptiveMaxPool2d
 
-`nn.AdaptiveMaxPool2d` 是自适应最大池化层。
+`nn.AdaptiveMaxPool2d` 是自适应最大池化层。它使用的池化方式仍然是 max pooling，也就是在每个池化区域内取最大值。
 
 ```python
 torch.nn.AdaptiveMaxPool2d(
@@ -343,7 +343,7 @@ torch.nn.AdaptiveMaxPool2d(
 )
 ```
 
-普通 `MaxPool2d` 是先指定 `kernel_size`、`stride`，再由这些参数算出输出高宽；自适应池化反过来，用户直接指定目标输出大小，PyTorch 自动决定每个池化区域如何划分。
+普通 `MaxPool2d` 是先指定 `kernel_size`、`stride`，再由这些参数算出输出高宽；自适应最大池化反过来，用户直接指定目标输出大小，PyTorch 自动决定每个池化区域如何划分，然后对每个区域取最大值。
 
 例如，不管输入特征图原来是 `8 x 9`、`10 x 10`，还是别的大小，下面这层都会把空间尺寸变成 `5 x 7`：
 
