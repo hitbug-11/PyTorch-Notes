@@ -1,6 +1,6 @@
 # 05-module_parameter
 
-本篇用于复习和速查 `nn.Parameter` 的核心机制，按“定义 -> 注册 -> 存放 -> 容器 -> 取出 -> 载入 -> 更新 -> 打印”的顺序展开。
+本篇用于复习和速查 `nn.Parameter` 的核心机制，按“定义 -> 注册 -> 存放 -> 容器 -> 取出 -> 打印 -> 保存 -> 载入 -> 更新”的顺序展开。
 
 速查目录：
 
@@ -9,10 +9,12 @@
 - `参数存放位置`：用 `TinnyCNN` 说明最外层模块和子模块各自保存哪些参数。
 - `参数容器`：说明 `ParameterList`、`ParameterDict` 适合管理多组独立参数。
 - `参数如何取出`：梳理 `parameters()`、`named_parameters()`、`state_dict()` 的作用。
+- `打印参数`：汇总常用打印命令和输出示例。
+- `参数如何保存`：说明如何保存模型参数和训练检查点。
 - `参数如何载入`：说明如何用 `torch.load()` 和 `load_state_dict()` 载入已保存参数。
 - `参数如何更新`：说明优化器如何通过 `model.parameters()` 获取并更新参数。
 - `相关概念`：区分权重、参数、超参数。
-- `打印参数`：汇总常用打印命令和输出示例。
+- `小结`：归纳参数注册、查看、保存、载入和更新的关键点。
 
 ## Parameter 是什么
 
@@ -361,11 +363,137 @@ print(model.state_dict().keys())
 odict_keys(['convolution_layer.weight', 'convolution_layer.bias', 'fc.weight', 'fc.bias'])
 ```
 
+## 打印参数
+
+下面的示例都基于这个模型：
+
+```python
+model = TinnyCNN(cls_num=2)
+```
+
+### 打印模型结构
+
+命令：
+
+```python
+print(model)
+```
+
+输出示例：
+
+```text
+TinnyCNN(
+  (convolution_layer): Conv2d(1, 1, kernel_size=(3, 3), stride=(1, 1))
+  (fc): Linear(in_features=36, out_features=2, bias=True)
+)
+```
+
+这个命令适合快速查看模型由哪些子模块组成。
+
+### 打印参数名
+
+命令：
+
+```python
+for name, param in model.named_parameters():
+    print(name, param.shape, param.requires_grad)
+```
+
+输出示例：
+
+```text
+convolution_layer.weight torch.Size([1, 1, 3, 3]) True
+convolution_layer.bias torch.Size([1]) True
+fc.weight torch.Size([2, 36]) True
+fc.bias torch.Size([2]) True
+```
+
+这个命令最适合调试模型参数，因为它能同时看到参数名、维度和 `requires_grad` 状态。
+
+### 打印参数形状
+
+命令：
+
+```python
+for param in model.parameters():
+    print(param.shape)
+```
+
+输出示例：
+
+```text
+torch.Size([1, 1, 3, 3])
+torch.Size([1])
+torch.Size([2, 36])
+torch.Size([2])
+```
+
+这个命令适合快速确认优化器能拿到哪些参数，但它不会显示参数名。
+
+### 打印完整参数值
+
+命令：
+
+```python
+for name, param in model.named_parameters():
+    print(name)
+    print(param)
+```
+
+输出示例：
+
+```text
+convolution_layer.weight
+Parameter containing:
+tensor([[[[ 0.1824, -0.0941,  0.2165],
+          [-0.3152,  0.0528,  0.1087],
+          [ 0.2713, -0.2016,  0.0449]]]], requires_grad=True)
+
+convolution_layer.bias
+Parameter containing:
+tensor([0.1172], requires_grad=True)
+
+fc.weight
+Parameter containing:
+tensor([[ 0.0231, -0.0814,  0.1128,  ..., -0.0416,  0.0589, -0.0972],
+        [-0.0665,  0.1043, -0.0187,  ...,  0.1201, -0.0324,  0.0716]],
+       requires_grad=True)
+
+fc.bias
+Parameter containing:
+tensor([ 0.0842, -0.0527], requires_grad=True)
+```
+
+完整参数值来自随机初始化，每次运行通常不同。调试时更常看参数名、形状和 `requires_grad`，不一定需要打印全部数值。
+
+## 参数如何保存
+
 保存模型参数时，最常见的方式是保存 `state_dict`：
 
 ```python
 torch.save(model.state_dict(), "tinnycnn.pth")
 ```
+
+这种文件只保存模型参数和 buffer，不保存模型类定义，也不保存 `forward()` 逻辑。后续载入时，需要先重新创建同结构模型，再把参数加载进去。
+
+如果保存的不只是模型参数，而是训练检查点，文件里通常会包含模型参数、优化器状态和训练轮数：
+
+```python
+torch.save({
+    "epoch": epoch,
+    "model_state_dict": model.state_dict(),
+    "optimizer_state_dict": optimizer.state_dict(),
+}, "checkpoint.pth")
+```
+
+两种保存方式的区别：
+
+| 保存对象 | 适合场景 | 载入方式 |
+| --- | --- | --- |
+| `model.state_dict()` | 只保存模型参数，用于推理或迁移学习 | `model.load_state_dict(torch.load(...))` |
+| checkpoint 字典 | 保存训练进度，用于中断后继续训练 | 分别取出 `model_state_dict`、`optimizer_state_dict`、`epoch` |
+
+一般建议优先保存 `state_dict` 或结构清晰的 checkpoint 字典，不建议直接保存整个模型对象。保存整个模型会把代码结构和序列化绑定得更紧，后续类名、文件路径或代码结构变化时更容易出问题。
 
 ## 参数如何载入
 
@@ -515,19 +643,9 @@ model.load_state_dict(state_dict)
 model.to(device)
 ```
 
-### 训练检查点
+### 载入训练检查点
 
-如果保存的不只是模型参数，而是训练检查点，文件里通常会包含模型参数、优化器状态和训练轮数：
-
-```python
-torch.save({
-    "epoch": epoch,
-    "model_state_dict": model.state_dict(),
-    "optimizer_state_dict": optimizer.state_dict(),
-}, "checkpoint.pth")
-```
-
-载入时要先取出对应字段：
+如果载入的是“参数如何保存”一节中的 checkpoint 字典，需要先取出对应字段：
 
 ```python
 checkpoint = torch.load(
@@ -587,109 +705,6 @@ optimizer.step()
 
 权重通常是参数的一部分；参数还包括偏置等其他可学习量；超参数不会被反向传播自动学习，而是控制训练过程。
 
-## 打印参数
-
-下面的示例都基于这个模型：
-
-```python
-model = TinnyCNN(cls_num=2)
-```
-
-### 打印模型结构
-
-命令：
-
-```python
-print(model)
-```
-
-输出示例：
-
-```text
-TinnyCNN(
-  (convolution_layer): Conv2d(1, 1, kernel_size=(3, 3), stride=(1, 1))
-  (fc): Linear(in_features=36, out_features=2, bias=True)
-)
-```
-
-这个命令适合快速查看模型由哪些子模块组成。
-
-### 打印参数名
-
-命令：
-
-```python
-for name, param in model.named_parameters():
-    print(name, param.shape, param.requires_grad)
-```
-
-输出示例：
-
-```text
-convolution_layer.weight torch.Size([1, 1, 3, 3]) True
-convolution_layer.bias torch.Size([1]) True
-fc.weight torch.Size([2, 36]) True
-fc.bias torch.Size([2]) True
-```
-
-这个命令最适合调试模型参数，因为它能同时看到参数名、维度和 `requires_grad` 状态。
-
-### 打印参数形状
-
-命令：
-
-```python
-for param in model.parameters():
-    print(param.shape)
-```
-
-输出示例：
-
-```text
-torch.Size([1, 1, 3, 3])
-torch.Size([1])
-torch.Size([2, 36])
-torch.Size([2])
-```
-
-这个命令适合快速确认优化器能拿到哪些参数，但它不会显示参数名。
-
-### 打印完整参数值
-
-命令：
-
-```python
-for name, param in model.named_parameters():
-    print(name)
-    print(param)
-```
-
-输出示例：
-
-```text
-convolution_layer.weight
-Parameter containing:
-tensor([[[[ 0.1824, -0.0941,  0.2165],
-          [-0.3152,  0.0528,  0.1087],
-          [ 0.2713, -0.2016,  0.0449]]]], requires_grad=True)
-
-convolution_layer.bias
-Parameter containing:
-tensor([0.1172], requires_grad=True)
-
-fc.weight
-Parameter containing:
-tensor([[ 0.0231, -0.0814,  0.1128,  ..., -0.0416,  0.0589, -0.0972],
-        [-0.0665,  0.1043, -0.0187,  ...,  0.1201, -0.0324,  0.0716]],
-       requires_grad=True)
-
-fc.bias
-Parameter containing:
-tensor([ 0.0842, -0.0527], requires_grad=True)
-```
-
-完整参数值来自随机初始化，每次运行通常不同。调试时更常看参数名、形状和 `requires_grad`，不一定需要打印全部数值。
-
 ## 小结
 
 - `Parameter` 是带有模型参数身份的 Tensor，赋值给 `Module` 属性后会被登记到 `_parameters`。
@@ -697,12 +712,14 @@ tensor([ 0.0842, -0.0527], requires_grad=True)
 - 每个 `Module` 都有自己的 `_parameters`，子模块参数保存在子模块自己的 `_parameters` 中。
 - 多个独立参数应使用 `ParameterList` 或 `ParameterDict` 管理，避免普通 `list`、`dict` 中的参数无法被模型注册。
 - `model.parameters()` 会递归遍历整个 `Module` 树，逐层取出 `_parameters` 中的参数。
-- 保存和载入参数时，推荐保存 `model.state_dict()`，再用 `torch.load()` 与 `model.load_state_dict()` 恢复到同结构模型中。
+- 打印参数时，最常用的是 `print(model)`、`named_parameters()` 和 `state_dict().keys()`。
+- 保存参数时，推荐保存 `model.state_dict()`；如果要继续训练，则保存包含模型参数、优化器状态和 epoch 的 checkpoint 字典。
+- 载入参数时，用 `torch.load()` 读取文件，再用 `model.load_state_dict()` 恢复到同结构模型中。
 - 载入参数前要先创建模型结构；参数文件只保存数值，不保存模型的 `forward()` 逻辑。
 - 优化器通过 `model.parameters()` 获取需要更新的参数；`lr`、`momentum`、`weight_decay` 等是控制更新方式的超参数。
-- 打印模型参数时，最常用的是 `print(model)`、`named_parameters()` 和 `state_dict().keys()`。
 
 ## 参考资料
 
+- [PyTorch torch.save](https://docs.pytorch.org/docs/2.12/generated/torch.save.html)
 - [PyTorch torch.load](https://docs.pytorch.org/docs/2.12/generated/torch.load.html)
 - [PyTorch Module.load_state_dict](https://docs.pytorch.org/docs/2.12/generated/torch.nn.Module.html#torch.nn.Module.load_state_dict)
