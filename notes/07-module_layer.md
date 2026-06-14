@@ -893,9 +893,19 @@ Output: 与输入形状相同 (*)
 
 `ReLU` 是最常用的激活函数之一，会把负数截断为 0，正数保持不变：
 
-```text
-ReLU(x) = max(0, x)
-```
+$$
+\operatorname{ReLU}(x) = \max(0, x)
+$$
+
+也可以写成分段形式：
+
+$$
+\operatorname{ReLU}(x)=
+\begin{cases}
+0, & x < 0 \\
+x, & x \ge 0
+\end{cases}
+$$
 
 参数列表：
 
@@ -934,10 +944,15 @@ block = nn.Sequential(
 
 `LeakyReLU` 是 `ReLU` 的变体。它不会把负数完全置为 0，而是给负数保留一个很小的斜率：
 
-```text
-LeakyReLU(x) = x, x >= 0
-LeakyReLU(x) = negative_slope * x, x < 0
-```
+$$
+\operatorname{LeakyReLU}(x)=
+\begin{cases}
+x, & x \ge 0 \\
+\alpha x, & x < 0
+\end{cases}
+$$
+
+其中 $\alpha$ 对应参数 `negative_slope`。
 
 参数列表：
 
@@ -969,9 +984,9 @@ print(y)  # tensor([-0.2000, -0.0500, 0.0000, 1.0000])
 
 `Sigmoid` 会把输入压缩到 `(0, 1)` 区间：
 
-```text
-Sigmoid(x) = 1 / (1 + exp(-x))
-```
+$$
+\operatorname{Sigmoid}(x) = \sigma(x) = \frac{1}{1 + e^{-x}}
+$$
 
 参数列表：
 
@@ -997,9 +1012,9 @@ print(y)  # tensor([0.1192, 0.5000, 0.8808])
 
 `Tanh` 会把输入压缩到 `(-1, 1)` 区间：
 
-```text
-Tanh(x) = (exp(x) - exp(-x)) / (exp(x) + exp(-x))
-```
+$$
+\tanh(x) = \frac{e^x - e^{-x}}{e^x + e^{-x}}
+$$
 
 参数列表：
 
@@ -1024,6 +1039,34 @@ print(y)  # tensor([-0.9640, 0.0000, 0.9640])
 #### GELU
 
 `GELU` 是 Transformer 中非常常见的激活函数。它不是简单地按正负截断，而是根据输入大小进行平滑门控：
+
+$$
+\operatorname{GELU}(x) = x \Phi(x)
+$$
+
+其中 $\Phi(x)$ 是标准正态分布的累积分布函数。也可以写成：
+
+$$
+\operatorname{GELU}(x)
+= \frac{1}{2}x
+\left(
+1 + \operatorname{erf}\left(\frac{x}{\sqrt{2}}\right)
+\right)
+$$
+
+当 `approximate="tanh"` 时，常用近似形式为：
+
+$$
+\operatorname{GELU}(x)
+\approx
+\frac{1}{2}x
+\left(
+1 + \tanh\left[
+\sqrt{\frac{2}{\pi}}
+\left(x + 0.044715x^3\right)
+\right]
+\right)
+$$
 
 ```python
 torch.nn.GELU(approximate="none")
@@ -1055,11 +1098,17 @@ ffn = nn.Sequential(
 
 #### SiLU
 
-`SiLU` 也叫 Swish，形式为：
+`SiLU` 也叫 Swish，表达式为：
 
-```text
-SiLU(x) = x * sigmoid(x)
-```
+$$
+\operatorname{SiLU}(x) = x \cdot \sigma(x)
+$$
+
+展开后：
+
+$$
+\operatorname{SiLU}(x) = \frac{x}{1 + e^{-x}}
+$$
 
 参数列表：
 
@@ -1089,7 +1138,15 @@ Softmax 类函数不是简单逐元素独立变换，而是沿某个维度把一
 
 #### Softmax
 
-`Softmax` 会把指定维度上的数值转换成概率分布。输出值都在 `(0, 1)` 之间，并且在 `dim` 维度上求和为 1：
+`Softmax` 会把指定维度上的数值转换成概率分布。输出值都在 `(0, 1)` 之间，并且在 `dim` 维度上求和为 1。
+
+对一个向量 $\mathbf{x} = [x_1, x_2, \dots, x_K]$，第 $i$ 个位置的 Softmax 输出为：
+
+$$
+\operatorname{Softmax}(x_i)
+=
+\frac{e^{x_i}}{\sum_{j=1}^{K} e^{x_j}}
+$$
 
 ```python
 torch.nn.Softmax(dim=None)
@@ -1120,6 +1177,25 @@ print(probs.sum(dim=1))  # tensor([1., 1.])
 #### LogSoftmax
 
 `LogSoftmax` 计算的是 `log(Softmax(x))`，输出是 log-probability。它比先做 `Softmax` 再取 `log` 更稳定。
+
+对一个向量 $\mathbf{x} = [x_1, x_2, \dots, x_K]$，第 $i$ 个位置的 LogSoftmax 输出为：
+
+$$
+\operatorname{LogSoftmax}(x_i)
+=
+\log
+\left(
+\frac{e^{x_i}}{\sum_{j=1}^{K} e^{x_j}}
+\right)
+$$
+
+等价地，也可以写成更稳定的形式：
+
+$$
+\operatorname{LogSoftmax}(x_i)
+=
+x_i - \log\left(\sum_{j=1}^{K} e^{x_j}\right)
+$$
 
 参数列表：
 
