@@ -1,12 +1,13 @@
 # 07-module_layers
 
-本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layers 总览 -> Convolutional Layers -> Pooling Layers -> 后续常见 layers”的顺序持续补充。
+本篇用于逐步整理 PyTorch 中常见的 `nn` 网络层，按“Layers 总览 -> Convolutional Layers -> Pooling Layers -> Normalization Layers -> 后续常见 layers”的顺序持续补充。
 
 速查目录：
 
 - `Layers 总览`：说明 layer 和 `nn.Module` 的关系，以及学习单个 layer 时应关注哪些问题。
 - `Convolutional Layers`：介绍卷积层的基本思想，并重点剖析 `nn.Conv2d` 的参数、输入输出形状和输出尺寸公式。
 - `Pooling Layers`：介绍池化层的降采样作用，重点说明 `nn.MaxPool2d` 和 `nn.AdaptiveMaxPool2d`。
+- `Normalization Layers`：介绍常见归一化层，重点比较 `BatchNorm`、`LayerNorm`、`InstanceNorm` 和 `GroupNorm` 的统计范围、作用差异和应用场景。
 - 后续章节：每学习完一个常见 layer，就在本篇新增一个对应章节。
 
 ## Layers 总览
@@ -371,3 +372,145 @@ nn.AdaptiveMaxPool2d((1, 1))
 ```
 
 把每个通道压缩成一个值，输出形状从 `[N, C, H, W]` 变成 `[N, C, 1, 1]`，再展平后接全连接层。
+
+## Normalization Layers
+
+Normalization Layers 指的是对中间特征做归一化的网络层。它们通常会先在某个维度范围内计算均值和方差，再把特征调整到更稳定的尺度，最后通过可学习参数 `weight` 和 `bias` 恢复模型需要的缩放和平移能力。
+
+归一化层的核心价值是：让不同特征的数值尺度更稳定，降低训练过程中激活分布剧烈变化带来的影响，使优化过程更平滑、更容易收敛。常见 normalization layers 主要有四种：
+
+- `BatchNorm`：Batch Normalization。
+- `LayerNorm`：Layer Normalization。
+- `InstanceNorm`：Instance Normalization。
+- `GroupNorm`：Group Normalization。
+
+在图像任务中，输入特征通常写成 `[N, C, H, W]`：
+
+- `N`：batch size，一个 batch 中的样本数量。
+- `C`：channel，特征图通道数。
+- `H`：height，特征图高度。
+- `W`：width，特征图宽度。
+
+下面这张图展示了四种归一化方法在 `[N, C, H, W]` 特征上的统计范围。蓝色区域可以理解为“计算一次均值和方差时会使用的元素集合”。
+
+![Normalization layers comparison](assets/normalization-layers-comparison.png)
+
+| 方法 | 一次均值/方差的统计范围 | 是否依赖 batch 维 | 主要作用特点 | 常见应用场景 |
+| --- | --- | --- | --- | --- |
+| `BatchNorm2d` | 固定某个通道 `c`，统计 `N x H x W` | 依赖 | 对每个通道做跨样本、跨空间位置的归一化，统计量更稳定，但小 batch 时容易不可靠。 | CNN 分类、常规视觉模型、batch size 较稳定的训练。 |
+| `LayerNorm` | 固定某个样本 `n`，统计该样本内部的 `C x H x W` 或指定特征维 | 不依赖 | 对单个样本的全部特征做归一化，适合样本之间长度或分布差异较大的任务。 | Transformer、RNN、NLP、小 batch 或变长序列任务。 |
+| `InstanceNorm2d` | 固定某个样本 `n` 和通道 `c`，统计 `H x W` | 不依赖 | 每个样本、每个通道单独归一化，弱化单张图像的对比度、风格和亮度差异。 | 风格迁移、图像生成、需要去除实例风格差异的视觉任务。 |
+| `GroupNorm` | 固定某个样本 `n`，把通道分组后统计 `C_group x H x W` | 不依赖 | 介于 `LayerNorm` 和 `InstanceNorm` 之间，既跨一部分通道统计，又不依赖 batch size。 | 小 batch 的检测、分割、视频任务，或显存限制下的 CNN。 |
+
+直观理解：
+
+- `BatchNorm` 是“同一个通道，在一个 batch 里一起归一化”。
+- `LayerNorm` 是“同一个样本，所有被指定的特征一起归一化”。
+- `InstanceNorm` 是“同一个样本的同一个通道，单独归一化”。
+- `GroupNorm` 是“同一个样本的一组通道，一起归一化”。
+
+### BatchNorm
+
+`BatchNorm` 的典型二维版本是 `nn.BatchNorm2d`，常用于 CNN 中的卷积层之后。
+
+```python
+torch.nn.BatchNorm2d(num_features)
+```
+
+对输入 `[N, C, H, W]` 来说，`num_features` 应该等于 `C`。它会对每个通道分别计算均值和方差：
+
+```text
+对第 c 个通道：
+统计范围 = x[:, c, :, :]
+元素数量 = N * H * W
+```
+
+也就是说，`BatchNorm2d` 会把同一个通道在不同样本、不同空间位置上的值放在一起统计。这样做的好处是统计量通常比较稳定，尤其适合 batch size 较大的 CNN 训练。
+
+需要注意的是，`BatchNorm` 在训练和推理时行为不同：
+
+- 训练时：使用当前 mini-batch 的均值和方差，并更新 running mean / running variance。
+- 推理时：默认使用训练过程中累计得到的 running mean / running variance。
+
+因此，`BatchNorm` 对 batch size 比较敏感。当 batch size 很小时，当前 batch 的统计量可能不稳定，训练效果会下降。
+
+### LayerNorm
+
+`LayerNorm` 的典型写法是：
+
+```python
+torch.nn.LayerNorm(normalized_shape)
+```
+
+它不跨样本统计，而是在每个样本内部，对指定的特征维度计算均值和方差。
+
+如果把输入看作 `[N, C, H, W]`，并希望对每个样本的全部特征归一化，可以理解为：
+
+```text
+对第 n 个样本：
+统计范围 = x[n, :, :, :]
+元素数量 = C * H * W
+```
+
+`LayerNorm` 的关键特点是：每个样本独立计算统计量，不依赖 batch size。因此它很适合 Transformer、RNN、NLP 和小 batch 场景。
+
+在 Transformer 中，输入通常不是 `[N, C, H, W]`，而是类似 `[batch, seq_len, hidden_size]` 的张量。此时 `LayerNorm` 通常对最后一个 hidden 维度做归一化：
+
+```python
+nn.LayerNorm(hidden_size)
+```
+
+### InstanceNorm
+
+`InstanceNorm` 的典型二维版本是 `nn.InstanceNorm2d`：
+
+```python
+torch.nn.InstanceNorm2d(num_features)
+```
+
+对输入 `[N, C, H, W]` 来说，它会对每个样本的每个通道单独计算均值和方差：
+
+```text
+对第 n 个样本、第 c 个通道：
+统计范围 = x[n, c, :, :]
+元素数量 = H * W
+```
+
+它不使用 batch 中其他样本的信息，也不跨通道统计。这样会更强地去掉单张图像内部某个通道的整体亮度、对比度和风格信息。
+
+因此，`InstanceNorm` 常用于风格迁移和图像生成任务。因为这些任务里，模型往往希望弱化原图自己的风格统计，把内容结构和风格表现拆开处理。
+
+### GroupNorm
+
+`GroupNorm` 的典型写法是：
+
+```python
+torch.nn.GroupNorm(num_groups, num_channels)
+```
+
+它会把 `C` 个通道分成 `num_groups` 组，然后在每个样本内部、每个通道组内部计算均值和方差。
+
+对输入 `[N, C, H, W]` 来说，如果每组有 `C_group = C / num_groups` 个通道，可以理解为：
+
+```text
+对第 n 个样本、第 g 个通道组：
+统计范围 = x[n, group_g, :, :]
+元素数量 = C_group * H * W
+```
+
+`GroupNorm` 不依赖 batch 维，因此小 batch 下通常比 `BatchNorm` 更稳定。同时它又不会像 `InstanceNorm` 那样每个通道完全独立，而是保留了一部分跨通道的统计关系。
+
+可以把 `GroupNorm` 看成一个折中方案：
+
+- 当 `num_groups=1` 时，所有通道在同一组，接近 `LayerNorm` 在 `[C, H, W]` 上的行为。
+- 当 `num_groups=C` 时，每个通道单独成组，接近 `InstanceNorm` 的行为。
+
+在目标检测、语义分割、视频模型等显存压力较大、batch size 往往较小的任务中，`GroupNorm` 是很常见的选择。
+
+参考资料：
+
+- [Normalization layers 差异图示参考](https://zhuanlan.zhihu.com/p/480250123)
+- [PyTorch BatchNorm2d](https://pytorch.org/docs/stable/generated/torch.nn.BatchNorm2d.html)
+- [PyTorch LayerNorm](https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html)
+- [PyTorch InstanceNorm2d](https://pytorch.org/docs/stable/generated/torch.nn.InstanceNorm2d.html)
+- [PyTorch GroupNorm](https://pytorch.org/docs/stable/generated/torch.nn.GroupNorm.html)
