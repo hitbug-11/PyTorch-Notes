@@ -7,7 +7,7 @@
 - `Layers 总览`：说明 layer 和 `nn.Module` 的关系，以及学习单个 layer 时应关注哪些问题。
 - `Convolutional Layers`：介绍卷积层的基本思想，并重点剖析 `nn.Conv2d` 的参数、输入输出形状和输出尺寸公式。
 - `Pooling Layers`：介绍池化层的降采样作用，重点说明 `nn.MaxPool2d` 和 `nn.AdaptiveMaxPool2d`。
-- `Normalization Layers`：介绍常见归一化层，重点比较 `BatchNorm`、`LayerNorm`、`InstanceNorm` 和 `GroupNorm` 的统计范围、作用差异和应用场景。
+- `Normalization Layers`：介绍常见归一化层，重点比较 `BatchNorm`、`LayerNorm`、`InstanceNorm` 和 `GroupNorm` 的统计范围、作用差异、参数和应用场景。
 - 后续章节：每学习完一个常见 layer，就在本篇新增一个对应章节。
 
 ## Layers 总览
@@ -411,10 +411,19 @@ Normalization Layers 指的是对中间特征做归一化的网络层。它们�
 
 ### BatchNorm
 
-`BatchNorm` 的典型二维版本是 `nn.BatchNorm2d`，常用于 CNN 中的卷积层之后。
+`BatchNorm` 的典型二维版本是 `nn.BatchNorm2d`，常用于 CNN 中的卷积层之后。它的完整常用写法如下：
 
 ```python
-torch.nn.BatchNorm2d(num_features)
+torch.nn.BatchNorm2d(
+    num_features,
+    eps=1e-5,
+    momentum=0.1,
+    affine=True,
+    track_running_stats=True,
+    device=None,
+    dtype=None,
+    bias=True,
+)
 ```
 
 对输入 `[N, C, H, W]` 来说，`num_features` 应该等于 `C`。它会对每个通道分别计算均值和方差：
@@ -427,6 +436,19 @@ torch.nn.BatchNorm2d(num_features)
 
 也就是说，`BatchNorm2d` 会把同一个通道在不同样本、不同空间位置上的值放在一起统计。这样做的好处是统计量通常比较稳定，尤其适合 batch size 较大的 CNN 训练。
 
+参数说明：
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `num_features` | 通道数 | 输入特征的 `C`，也就是需要归一化的通道数量。 |
+| `eps` | 数值稳定项 | 加到方差上，避免除以 0，默认 `1e-5`。 |
+| `momentum` | running statistics 更新系数 | 用于更新 `running_mean` 和 `running_var`，默认 `0.1`。这里的 `momentum` 不是优化器里的动量。 |
+| `affine` | 是否学习缩放和平移 | 为 `True` 时学习 `weight` 和 `bias`，每个通道各一个缩放和平移参数。 |
+| `track_running_stats` | 是否记录运行时统计量 | 为 `True` 时训练阶段维护 `running_mean` 和 `running_var`，推理阶段默认使用它们。 |
+| `device` | 参数所在设备 | 创建层时直接指定参数放在哪个设备上，通常不手动写，而是用 `model.to(device)`。 |
+| `dtype` | 参数数据类型 | 创建层时指定参数类型，通常不手动写。 |
+| `bias` | 是否学习平移项 | 只在 `affine=True` 时有效；为 `False` 时只学习缩放 `weight`，不学习加性偏置。 |
+
 需要注意的是，`BatchNorm` 在训练和推理时行为不同：
 
 - 训练时：使用当前 mini-batch 的均值和方差，并更新 running mean / running variance。
@@ -434,12 +456,44 @@ torch.nn.BatchNorm2d(num_features)
 
 因此，`BatchNorm` 对 batch size 比较敏感。当 batch size 很小时，当前 batch 的统计量可能不稳定，训练效果会下降。
 
+使用示范：
+
+```python
+import torch
+import torch.nn as nn
+
+
+bn = nn.BatchNorm2d(num_features=32)
+
+x = torch.randn(8, 32, 16, 16)  # [N, C, H, W]
+y = bn(x)
+
+print(y.shape)  # torch.Size([8, 32, 16, 16])
+```
+
+在 CNN 中，它经常和卷积层、激活函数组合使用：
+
+```python
+block = nn.Sequential(
+    nn.Conv2d(3, 32, kernel_size=3, padding=1, bias=False),
+    nn.BatchNorm2d(32),
+    nn.ReLU(),
+)
+```
+
 ### LayerNorm
 
 `LayerNorm` 的典型写法是：
 
 ```python
-torch.nn.LayerNorm(normalized_shape)
+torch.nn.LayerNorm(
+    normalized_shape,
+    eps=1e-5,
+    elementwise_affine=True,
+    bias=True,
+    device=None,
+    dtype=None,
+)
 ```
 
 它不跨样本统计，而是在每个样本内部，对指定的特征维度计算均值和方差。
@@ -454,10 +508,46 @@ torch.nn.LayerNorm(normalized_shape)
 
 `LayerNorm` 的关键特点是：每个样本独立计算统计量，不依赖 batch size。因此它很适合 Transformer、RNN、NLP 和小 batch 场景。
 
+参数说明：
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `normalized_shape` | 被归一化的尾部维度形状 | `LayerNorm` 会对输入最后若干个维度计算均值和方差。若写成 `128`，表示只归一化最后一维；若写成 `[C, H, W]`，表示归一化最后三维。 |
+| `eps` | 数值稳定项 | 加到方差上，避免除以 0，默认 `1e-5`。 |
+| `elementwise_affine` | 是否学习逐元素缩放和平移 | 为 `True` 时学习和 `normalized_shape` 同形状的 `weight` 和 `bias`。注意它不是每个通道一个参数，而是被归一化范围内每个位置都可以有参数。 |
+| `bias` | 是否学习平移项 | 只在 `elementwise_affine=True` 时有效；为 `False` 时只学习 `weight`。 |
+| `device` | 参数所在设备 | 创建层时直接指定参数设备，通常用 `model.to(device)` 统一处理。 |
+| `dtype` | 参数数据类型 | 创建层时指定参数类型，通常不手动写。 |
+
 在 Transformer 中，输入通常不是 `[N, C, H, W]`，而是类似 `[batch, seq_len, hidden_size]` 的张量。此时 `LayerNorm` 通常对最后一个 hidden 维度做归一化：
 
 ```python
 nn.LayerNorm(hidden_size)
+```
+
+使用示范：
+
+```python
+import torch
+import torch.nn as nn
+
+
+# Transformer / NLP 常见写法：归一化最后一维 hidden_size
+x = torch.randn(8, 20, 128)  # [batch, seq_len, hidden_size]
+ln = nn.LayerNorm(normalized_shape=128)
+y = ln(x)
+
+print(y.shape)  # torch.Size([8, 20, 128])
+```
+
+如果用于 `[N, C, H, W]` 图像特征，并希望每个样本内部的 `C x H x W` 一起归一化：
+
+```python
+x = torch.randn(8, 32, 16, 16)
+ln = nn.LayerNorm(normalized_shape=[32, 16, 16])
+y = ln(x)
+
+print(y.shape)  # torch.Size([8, 32, 16, 16])
 ```
 
 ### InstanceNorm
@@ -465,7 +555,16 @@ nn.LayerNorm(hidden_size)
 `InstanceNorm` 的典型二维版本是 `nn.InstanceNorm2d`：
 
 ```python
-torch.nn.InstanceNorm2d(num_features)
+torch.nn.InstanceNorm2d(
+    num_features,
+    eps=1e-5,
+    momentum=0.1,
+    affine=False,
+    track_running_stats=False,
+    device=None,
+    dtype=None,
+    bias=True,
+)
 ```
 
 对输入 `[N, C, H, W]` 来说，它会对每个样本的每个通道单独计算均值和方差：
@@ -480,12 +579,54 @@ torch.nn.InstanceNorm2d(num_features)
 
 因此，`InstanceNorm` 常用于风格迁移和图像生成任务。因为这些任务里，模型往往希望弱化原图自己的风格统计，把内容结构和风格表现拆开处理。
 
+参数说明：
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `num_features` | 通道数 | 输入特征的 `C`。 |
+| `eps` | 数值稳定项 | 加到方差上，避免除以 0，默认 `1e-5`。 |
+| `momentum` | running statistics 更新系数 | 只有在 `track_running_stats=True` 时才用于更新运行时均值和方差。 |
+| `affine` | 是否学习缩放和平移 | 默认 `False`，这点和 `BatchNorm2d` 不同；为 `True` 时每个通道学习一组 `weight` 和 `bias`。 |
+| `track_running_stats` | 是否记录运行时统计量 | 默认 `False`，表示训练和推理都使用当前输入自己的 instance statistics。 |
+| `device` | 参数所在设备 | 创建层时直接指定参数设备，通常不手动写。 |
+| `dtype` | 参数数据类型 | 创建层时指定参数类型，通常不手动写。 |
+| `bias` | 是否学习平移项 | 只在 `affine=True` 时有效；为 `False` 时不学习加性偏置。 |
+
+使用示范：
+
+```python
+import torch
+import torch.nn as nn
+
+
+inorm = nn.InstanceNorm2d(num_features=32, affine=True)
+
+x = torch.randn(8, 32, 16, 16)
+y = inorm(x)
+
+print(y.shape)  # torch.Size([8, 32, 16, 16])
+```
+
+如果更接近风格迁移中常见设置，也可以不使用可学习仿射参数：
+
+```python
+style_norm = nn.InstanceNorm2d(num_features=32, affine=False)
+```
+
 ### GroupNorm
 
 `GroupNorm` 的典型写法是：
 
 ```python
-torch.nn.GroupNorm(num_groups, num_channels)
+torch.nn.GroupNorm(
+    num_groups,
+    num_channels,
+    eps=1e-5,
+    affine=True,
+    device=None,
+    dtype=None,
+    bias=True,
+)
 ```
 
 它会把 `C` 个通道分成 `num_groups` 组，然后在每个样本内部、每个通道组内部计算均值和方差。
@@ -500,12 +641,49 @@ torch.nn.GroupNorm(num_groups, num_channels)
 
 `GroupNorm` 不依赖 batch 维，因此小 batch 下通常比 `BatchNorm` 更稳定。同时它又不会像 `InstanceNorm` 那样每个通道完全独立，而是保留了一部分跨通道的统计关系。
 
+参数说明：
+
+| 参数 | 含义 | 说明 |
+| --- | --- | --- |
+| `num_groups` | 通道分组数量 | 把 `num_channels` 个通道分成多少组。要求 `num_channels` 能被 `num_groups` 整除。 |
+| `num_channels` | 输入通道数 | 输入特征的 `C`。 |
+| `eps` | 数值稳定项 | 加到方差上，避免除以 0，默认 `1e-5`。 |
+| `affine` | 是否学习缩放和平移 | 为 `True` 时学习每个通道一组 `weight` 和 `bias`。 |
+| `device` | 参数所在设备 | 创建层时直接指定参数设备，通常不手动写。 |
+| `dtype` | 参数数据类型 | 创建层时指定参数类型，通常不手动写。 |
+| `bias` | 是否学习平移项 | 只在 `affine=True` 时有效；为 `False` 时不学习加性偏置。 |
+
 可以把 `GroupNorm` 看成一个折中方案：
 
 - 当 `num_groups=1` 时，所有通道在同一组，接近 `LayerNorm` 在 `[C, H, W]` 上的行为。
 - 当 `num_groups=C` 时，每个通道单独成组，接近 `InstanceNorm` 的行为。
 
 在目标检测、语义分割、视频模型等显存压力较大、batch size 往往较小的任务中，`GroupNorm` 是很常见的选择。
+
+使用示范：
+
+```python
+import torch
+import torch.nn as nn
+
+
+gn = nn.GroupNorm(num_groups=8, num_channels=32)
+
+x = torch.randn(8, 32, 16, 16)
+y = gn(x)
+
+print(y.shape)  # torch.Size([8, 32, 16, 16])
+```
+
+几个特殊写法：
+
+```python
+# 所有通道放到 1 组，接近 LayerNorm 在 [C, H, W] 上的效果
+gn_like_ln = nn.GroupNorm(num_groups=1, num_channels=32)
+
+# 每个通道单独成组，接近 InstanceNorm
+gn_like_in = nn.GroupNorm(num_groups=32, num_channels=32)
+```
 
 参考资料：
 
