@@ -1,10 +1,11 @@
 # 08-hooks
 
-本篇整理 PyTorch 中常用的 hook 机制，按“Hook 概念 -> 常用 Hook 对比 -> Module 前向 Hook -> Module 反向 Hook -> Tensor 梯度 Hook -> 旧接口与易错点 -> 小结”的顺序组织。阅读时可以先看对比表明确各类 hook 的触发时机，再按具体函数理解它们的作用、签名、返回值和示例。
+本篇整理 PyTorch 中常用的 hook 机制，按“Hook 概念 -> Hook 应用位置图 -> 常用 Hook 对比 -> Module 前向 Hook -> Module 反向 Hook -> Tensor 梯度 Hook -> 旧接口与易错点 -> 小结”的顺序组织。阅读时可以先看流程图和对比表明确各类 hook 的触发时机，再按具体函数理解它们的作用、签名、返回值和示例。
 
 速查目录：
 
 - `Hook 概念`：说明 hook 是什么、为什么需要 hook，以及它和 `forward`、反向传播的关系。
+- `Hook 应用位置图`：用一张流程图展示各类 hook 在前向传播、反向传播和梯度累积中的位置。
 - `常用 Hook 对比`：用表格比较常见 hook 函数的注册对象、触发时机、函数签名和典型用途。
 - `register_forward_pre_hook`：在模块执行 `forward` 前触发，适合检查或调整输入。
 - `register_forward_hook`：在模块执行 `forward` 后触发，适合保存中间特征或观察输出形状。
@@ -43,6 +44,49 @@ output = module(input_tensor)
 # 不再需要 hook 时移除
 handle.remove()
 ```
+
+## Hook 应用位置图
+
+下面这张图按一次常见训练迭代的顺序展示各种 hook 的触发位置。图中蓝色理解为前向传播阶段，橙色理解为反向传播阶段，绿色理解为参数 `.grad` 已经累积后的阶段。
+
+```mermaid
+flowchart TD
+    A["输入 batch<br/>x"] --> B["调用模型<br/>model(x)"]
+    B --> C["进入某个 Module<br/>Module.__call__"]
+    C --> D["Module forward 前<br/>register_forward_pre_hook"]
+    D --> E["执行 forward<br/>output = module(input)"]
+    E --> F["Module forward 后<br/>register_forward_hook"]
+    F --> G["得到模型输出<br/>prediction"]
+    G --> H["计算 loss"]
+    H --> I["调用 loss.backward()"]
+
+    I --> J["反向传播到某个 Tensor<br/>Tensor.register_hook"]
+    J --> K["反向传播到某个 Module 的输出端<br/>register_full_backward_pre_hook<br/>接收 grad_output"]
+    K --> L["计算该 Module 的反向传播<br/>由 grad_output 得到 grad_input"]
+    L --> M["该 Module 反向传播后<br/>register_full_backward_hook<br/>接收 grad_input 和 grad_output"]
+    M --> N["梯度继续向前一层传播"]
+    M --> O["叶子 Tensor / Parameter<br/>.grad 累积完成"]
+    O --> P["register_post_accumulate_grad_hook<br/>读取或处理最终 param.grad"]
+
+    F -. "常用于保存 activation" .-> Q["特征可视化 / Grad-CAM"]
+    M -. "常用于保存 gradient" .-> Q
+
+    classDef forward fill:#e8f3ff,stroke:#2b6cb0,color:#1a365d;
+    classDef backward fill:#fff4e6,stroke:#c05621,color:#7b341e;
+    classDef accumulated fill:#e6ffed,stroke:#2f855a,color:#22543d;
+    classDef analysis fill:#f7fafc,stroke:#718096,color:#2d3748;
+
+    class A,B,C,D,E,F,G,H forward;
+    class I,J,K,L,M,N backward;
+    class O,P accumulated;
+    class Q analysis;
+```
+
+这张图可以帮助记住三类位置：
+
+- `forward_pre_hook` 和 `forward_hook` 夹在模块 `forward` 的前后，属于前向传播观察点。
+- `full_backward_pre_hook` 和 `full_backward_hook` 夹在模块反向计算的前后，属于模块级梯度观察点。
+- `Tensor.register_hook` 关注某个张量的梯度计算时刻，`register_post_accumulate_grad_hook` 关注叶子张量或参数的 `.grad` 累积完成之后。
 
 ## 常用 Hook 对比
 
