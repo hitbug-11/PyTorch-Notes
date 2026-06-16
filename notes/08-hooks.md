@@ -235,6 +235,28 @@ handle.remove()
 
 这里的 hook 注册在 `model[0]`，也就是第一层 `Conv2d` 上。执行完整模型时，只要数据经过这一层，`save_feature` 就会自动执行，并把该层输出保存到 `features` 中。
 
+这里用 `handle` 保存 `register_forward_hook` 的返回值，是为了后续能够移除这个 hook。可以把 `handle` 理解成这个 hook 的“管理句柄”：
+
+```python
+handle = model[0].register_forward_hook(save_feature)
+```
+
+这行代码执行后，hook 已经被挂到 `model[0]` 上。只要不移除，之后每次执行 `model(x)`，`save_feature` 都会自动触发。
+
+```python
+handle.remove()
+```
+
+这行代码会取消刚才注册的 hook。取消之后，再次执行 `model(x)` 时，`save_feature` 就不会再被自动调用。
+
+保存 `handle` 并在使用结束后调用 `remove()`，主要有三个原因：
+
+- 避免 hook 一直生效，导致后续普通前向传播也继续保存特征或打印信息。
+- 避免在循环或多次实验中重复注册同一个 hook，造成一次 `forward` 触发多次回调。
+- 避免 hook 中保存的中间张量长期累积，增加内存或显存占用。
+
+如果只是临时提取一次中间特征，推荐流程就是：注册 hook -> 执行一次前向传播 -> 读取保存结果 -> 立刻 `remove()`。
+
 使用建议：
 
 - 只保存中间结果时，用 `output.detach()`，避免把整个计算图一起保存下来。
