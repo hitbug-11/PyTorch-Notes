@@ -17,6 +17,7 @@ PyTorch-Notes/
 │   ├── 05-module_parameter.md
 │   ├── 06-module_containers.md
 │   ├── 07-module_layer.md
+│   ├── 08-hooks.md
 │   └── assets/
 └── .gitignore
 ```
@@ -36,6 +37,7 @@ PyTorch-Notes/
 | [05-module_parameter](notes/05-module_parameter.md) | 介绍 `Parameter`、`_parameters`、参数容器、`parameters()`、优化器参数传递和模型参数打印方法。 |
 | [06-module_containers](notes/06-module_containers.md) | 介绍 `Sequential`、`ModuleList`、`ModuleDict` 的使用场景、注册机制、前向调用方式和 AlexNet 中的容器应用。 |
 | [07-module_layer](notes/07-module_layer.md) | 用于持续整理 PyTorch 常见 `nn` 网络层，按作用、参数、输入输出形状、代码实践和易错点逐章补充。 |
+| [08-hooks](notes/08-hooks.md) | 介绍 PyTorch hook 机制，比较常用 Module hook 和 Tensor hook，并按作用、用法和示例说明各类 hook 的使用场景。 |
 
 ## 内容范围
 
