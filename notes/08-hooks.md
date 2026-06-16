@@ -1,19 +1,17 @@
 # 08-hooks
 
-本篇整理 PyTorch 中常用的 hook 机制，按“Hook 概念 -> Hook 应用位置图 -> 常用 Hook 对比 -> Module 前向 Hook -> Module 反向 Hook -> Tensor 梯度 Hook -> 旧接口与易错点 -> 小结”的顺序组织。阅读时可以先看流程图和对比表明确各类 hook 的触发时机，再按具体函数理解它们的作用、签名、返回值和示例。
+本篇整理 PyTorch 中常用的 hook 机制，按“Hook 概念 -> Hook 应用位置图 -> 常用 Hook 对比 -> register_forward_pre_hook -> register_forward_hook -> Tensor.register_hook -> register_full_backward_hook -> 易错点 -> 小结”的顺序组织。阅读时可以先看流程图明确各类 hook 在计算流程中的位置，再按流程图从上到下理解每种 hook 的作用、用法和示例。
 
 速查目录：
 
 - `Hook 概念`：说明 hook 是什么、为什么需要 hook，以及它和 `forward`、反向传播的关系。
-- `Hook 应用位置图`：用一张流程图展示各类 hook 在前向传播、反向传播和梯度累积中的位置。
-- `常用 Hook 对比`：用表格比较常见 hook 函数的注册对象、触发时机、函数签名和典型用途。
+- `Hook 应用位置图`：用一张流程图展示常用 hook 在前向传播和反向传播中的触发位置。
+- `常用 Hook 对比`：比较常用 hook 的注册对象、触发时机、函数签名和典型用途。
 - `register_forward_pre_hook`：在模块执行 `forward` 前触发，适合检查或调整输入。
 - `register_forward_hook`：在模块执行 `forward` 后触发，适合保存中间特征或观察输出形状。
-- `register_full_backward_pre_hook`：在模块反向传播前触发，接收输出梯度，适合观察或调整流入该模块的梯度。
-- `register_full_backward_hook`：在模块梯度计算后触发，适合保存输入梯度、输出梯度或实现 Grad-CAM 一类分析。
 - `Tensor.register_hook`：在某个张量梯度被计算时触发，适合读取或替换该张量的梯度。
-- `Tensor.register_post_accumulate_grad_hook`：在叶子张量的 `.grad` 累积完成后触发，适合观察参数最终累积到的梯度。
-- `旧接口与易错点`：说明 `register_backward_hook` 的替代关系，以及 hook 使用中的常见问题。
+- `register_full_backward_hook`：在模块梯度计算后触发，适合保存输入梯度、输出梯度或实现 Grad-CAM 一类分析。
+- `易错点`：整理 hook 使用中容易出错的地方。
 
 ## Hook 概念
 
@@ -47,7 +45,7 @@ handle.remove()
 
 ## Hook 应用位置图
 
-下面这张图按一次常见训练迭代的顺序展示各种 hook 的触发位置。图中蓝色理解为前向传播阶段，橙色理解为反向传播阶段，绿色理解为参数 `.grad` 已经累积后的阶段。
+下面这张图按一次常见训练迭代的顺序展示常用 hook 的触发位置。图中蓝色是前向传播阶段，橙色是反向传播阶段。
 
 ```mermaid
 flowchart TD
@@ -61,32 +59,28 @@ flowchart TD
     H --> I["调用 loss.backward()"]
 
     I --> J["反向传播到某个 Tensor<br/>Tensor.register_hook"]
-    J --> K["反向传播到某个 Module 的输出端<br/>register_full_backward_pre_hook<br/>接收 grad_output"]
-    K --> L["计算该 Module 的反向传播<br/>由 grad_output 得到 grad_input"]
-    L --> M["该 Module 反向传播后<br/>register_full_backward_hook<br/>接收 grad_input 和 grad_output"]
-    M --> N["梯度继续向前一层传播"]
-    M --> O["叶子 Tensor / Parameter<br/>.grad 累积完成"]
-    O --> P["register_post_accumulate_grad_hook<br/>读取或处理最终 param.grad"]
+    J --> K["计算某个 Module 的反向传播<br/>由 grad_output 得到 grad_input"]
+    K --> L["该 Module 反向传播后<br/>register_full_backward_hook<br/>接收 grad_input 和 grad_output"]
+    L --> M["梯度继续向前一层传播"]
 
-    F -. "常用于保存 activation" .-> Q["特征可视化 / Grad-CAM"]
-    M -. "常用于保存 gradient" .-> Q
+    F -. "保存 activation" .-> N["特征可视化 / Grad-CAM"]
+    L -. "保存 gradient" .-> N
 
     classDef forward fill:#e8f3ff,stroke:#2b6cb0,color:#1a365d;
     classDef backward fill:#fff4e6,stroke:#c05621,color:#7b341e;
-    classDef accumulated fill:#e6ffed,stroke:#2f855a,color:#22543d;
     classDef analysis fill:#f7fafc,stroke:#718096,color:#2d3748;
 
     class A,B,C,D,E,F,G,H forward;
-    class I,J,K,L,M,N backward;
-    class O,P accumulated;
-    class Q analysis;
+    class I,J,K,L,M backward;
+    class N analysis;
 ```
 
-这张图可以帮助记住三类位置：
+按这张图可以把常用 hook 分成四个位置：
 
-- `forward_pre_hook` 和 `forward_hook` 夹在模块 `forward` 的前后，属于前向传播观察点。
-- `full_backward_pre_hook` 和 `full_backward_hook` 夹在模块反向计算的前后，属于模块级梯度观察点。
-- `Tensor.register_hook` 关注某个张量的梯度计算时刻，`register_post_accumulate_grad_hook` 关注叶子张量或参数的 `.grad` 累积完成之后。
+- `register_forward_pre_hook`：模块 `forward` 前，先看或改输入。
+- `register_forward_hook`：模块 `forward` 后，先看或保存输出。
+- `Tensor.register_hook`：某个张量的梯度被计算出来时，读取或替换这个张量的梯度。
+- `register_full_backward_hook`：某个模块完成反向梯度计算后，读取 `grad_input` 和 `grad_output`。
 
 ## 常用 Hook 对比
 
@@ -94,16 +88,17 @@ flowchart TD
 | --- | --- | --- | --- | --- | --- |
 | `module.register_forward_pre_hook` | `nn.Module` | 模块 `forward` 执行前 | `hook(module, args)` 或 `hook(module, args, kwargs)` | 可以返回新的输入 | 输入检查、输入预处理、临时替换输入 |
 | `module.register_forward_hook` | `nn.Module` | 模块 `forward` 执行后 | `hook(module, args, output)` 或 `hook(module, args, kwargs, output)` | 可以返回新的输出 | 保存中间特征、打印输出形状、特征可视化 |
-| `module.register_full_backward_pre_hook` | `nn.Module` | 模块反向传播计算前 | `hook(module, grad_output)` | 可以返回新的输出梯度 | 观察或调整流入模块的梯度 |
-| `module.register_full_backward_hook` | `nn.Module` | 模块相关梯度计算后 | `hook(module, grad_input, grad_output)` | 可以返回新的输入梯度 | 保存梯度、分析梯度流、Grad-CAM |
 | `tensor.register_hook` | `Tensor` | 该张量梯度被计算时 | `hook(grad)` | 可以返回新的梯度 | 保存非叶子张量梯度、梯度缩放、梯度裁剪实验 |
-| `tensor.register_post_accumulate_grad_hook` | 叶子 `Tensor` | `.grad` 累积完成后 | `hook(param)` | 可以原地访问或修改参数及 `.grad` | 查看参数最终梯度、特殊优化逻辑 |
-| `module.register_backward_hook` | `nn.Module` | 旧版模块反向 hook | `hook(module, grad_input, grad_output)` | 不建议新代码使用 | 旧教程中常见，现应改用 `register_full_backward_hook` |
+| `module.register_full_backward_hook` | `nn.Module` | 模块相关梯度计算后 | `hook(module, grad_input, grad_output)` | 可以返回新的输入梯度 | 保存梯度、分析梯度流、Grad-CAM |
 
-记忆时可以按两条线区分：
+记忆时可以按执行顺序理解：
 
-- 前向传播：`forward_pre_hook` 在 `forward` 前，`forward_hook` 在 `forward` 后。
-- 反向传播：`full_backward_pre_hook` 先拿到 `grad_output`，`full_backward_hook` 再拿到 `grad_input` 和 `grad_output`。
+```text
+forward 前
+  -> forward 后
+  -> backward 中某个 Tensor 梯度被计算
+  -> backward 中某个 Module 梯度计算完成
+```
 
 ## register_forward_pre_hook
 
@@ -246,67 +241,66 @@ handle.remove()
 - 如果需要保存到 CPU，可以写成 `output.detach().cpu()`，减少 GPU 显存占用。
 - 不建议在普通调试场景中修改输出；如果修改输出，后续网络会收到修改后的结果。
 
-## register_full_backward_pre_hook
+## Tensor.register_hook
 
-`register_full_backward_pre_hook` 注册在某个 `nn.Module` 上，会在该模块反向传播计算前触发。它接收的是该模块输出端传回来的梯度，也就是 `grad_output`。
+`Tensor.register_hook` 注册在某个张量上，会在这个张量的梯度被计算出来时触发。
 
 常用作用：
 
-- 观察流入某一层的输出梯度。
-- 在实验中缩放、截断或替换流入某一层的梯度。
-- 调试梯度是否从后面的层正常传回当前层。
+- 保存非叶子张量的梯度。
+- 检查某个中间张量的梯度是否正常。
+- 返回新的梯度，实现简单的梯度缩放或裁剪实验。
 
 基本用法：
 
 ```python
-handle = module.register_full_backward_pre_hook(hook_fn)
+handle = tensor.register_hook(hook_fn)
 ```
 
 hook 函数签名是：
 
 ```python
-def hook_fn(module, grad_output):
+def hook_fn(grad):
     ...
 ```
 
-`grad_output` 是一个元组，因为一个模块可能有多个输出。如果要修改它，应返回新的 `grad_output` 元组；如果不返回值，原梯度保持不变。
+如果 hook 返回 `None`，原梯度不变；如果返回一个新张量，PyTorch 会使用这个新梯度继续反向传播。注意不要原地修改传入的 `grad`。
 
-示例：把流入 `Linear` 输出端的梯度缩小一半。
+示例：保存中间张量 `y` 的梯度，并把继续传给前面节点的梯度缩小一半。
 
 ```python
 import torch
-import torch.nn as nn
 
 
-linear = nn.Linear(2, 1, bias=False)
+x = torch.ones(4, requires_grad=True)
+y = x * 2
 
-with torch.no_grad():
-    linear.weight.copy_(torch.tensor([[1.0, 1.0]]))
-
-
-def scale_grad_output(module, grad_output):
-    (grad_y,) = grad_output
-    return (grad_y * 0.5,)
+saved_grads = []
 
 
-handle = linear.register_full_backward_pre_hook(scale_grad_output)
+def halve_grad(grad):
+    saved_grads.append(grad.detach())
+    return grad * 0.5
 
-x = torch.tensor([[2.0, 3.0]], requires_grad=True)
-loss = linear(x).sum()
+
+handle = y.register_hook(halve_grad)
+
+loss = y.sum()
 loss.backward()
 
-print(x.grad)  # tensor([[0.5000, 0.5000]])
+print(saved_grads[0])  # tensor([1., 1., 1., 1.])
+print(x.grad)          # tensor([1., 1., 1., 1.])
 
 handle.remove()
 ```
 
-没有这个 hook 时，`linear(x)` 对 `x` 的梯度是 `[1, 1]`。注册 hook 后，输出端梯度先被缩小为一半，再继续反向传播，所以 `x.grad` 变成 `[0.5, 0.5]`。
+如果没有 hook，`loss = y.sum()` 对 `y` 的梯度是 `[1, 1, 1, 1]`，再经过 `y = x * 2`，`x.grad` 应该是 `[2, 2, 2, 2]`。这里 hook 把 `y` 的梯度缩小一半，所以最后传到 `x` 的梯度变成 `[1, 1, 1, 1]`。
 
 使用建议：
 
-- 需要修改梯度时，返回新的梯度张量，不要对传入的 `grad_output` 做原地修改。
-- 反向 hook 应在对应的前向计算之前注册，避免当前这次计算图没有挂上 hook。
-- 这个 hook 更适合实验和调试，正式训练中修改梯度要非常谨慎。
+- 想读取中间张量梯度时，`Tensor.register_hook` 比直接访问非叶子张量 `.grad` 更直接。
+- 如果只是观察梯度，不要返回新梯度。
+- 如果修改梯度，应确保返回张量的形状和原梯度一致。
 
 ## register_full_backward_hook
 
@@ -400,159 +394,6 @@ target_layer.register_full_backward_hook(save_gradient)
 - 如果模块输入不需要梯度，hook 可能会在输出梯度计算时触发；如果输出也不需要梯度，则不会触发。
 - 为了避免调试代码影响训练，保存的梯度通常用 `.detach()` 断开计算图。
 
-## Tensor.register_hook
-
-`Tensor.register_hook` 注册在某个张量上，会在这个张量的梯度被计算出来时触发。
-
-常用作用：
-
-- 保存非叶子张量的梯度。
-- 检查某个中间张量的梯度是否正常。
-- 返回新的梯度，实现简单的梯度缩放或裁剪实验。
-
-基本用法：
-
-```python
-handle = tensor.register_hook(hook_fn)
-```
-
-hook 函数签名是：
-
-```python
-def hook_fn(grad):
-    ...
-```
-
-如果 hook 返回 `None`，原梯度不变；如果返回一个新张量，PyTorch 会使用这个新梯度继续反向传播。注意不要原地修改传入的 `grad`。
-
-示例：保存中间张量 `y` 的梯度，并把继续传给前面节点的梯度缩小一半。
-
-```python
-import torch
-
-
-x = torch.ones(4, requires_grad=True)
-y = x * 2
-
-saved_grads = []
-
-
-def halve_grad(grad):
-    saved_grads.append(grad.detach())
-    return grad * 0.5
-
-
-handle = y.register_hook(halve_grad)
-
-loss = y.sum()
-loss.backward()
-
-print(saved_grads[0])  # tensor([1., 1., 1., 1.])
-print(x.grad)          # tensor([1., 1., 1., 1.])
-
-handle.remove()
-```
-
-如果没有 hook，`loss = y.sum()` 对 `y` 的梯度是 `[1, 1, 1, 1]`，再经过 `y = x * 2`，`x.grad` 应该是 `[2, 2, 2, 2]`。这里 hook 把 `y` 的梯度缩小一半，所以最后传到 `x` 的梯度变成 `[1, 1, 1, 1]`。
-
-使用建议：
-
-- 想读取中间张量梯度时，`Tensor.register_hook` 比直接访问非叶子张量 `.grad` 更直接。
-- 如果只是观察梯度，不要返回新梯度。
-- 如果修改梯度，应确保返回张量的形状和原梯度一致。
-
-## Tensor.register_post_accumulate_grad_hook
-
-`Tensor.register_post_accumulate_grad_hook` 也注册在张量上，但它和 `Tensor.register_hook` 的触发点不同：它会在叶子张量的 `.grad` 已经累积完成后触发。
-
-常用作用：
-
-- 查看参数在一次反向传播后最终累积到 `.grad` 中的梯度。
-- 对参数梯度做日志记录或统计。
-- 实验性地在 backward 阶段后执行简单参数更新。
-
-基本用法：
-
-```python
-handle = tensor.register_post_accumulate_grad_hook(hook_fn)
-```
-
-hook 函数签名是：
-
-```python
-def hook_fn(param):
-    ...
-```
-
-这里传入的不是梯度本身，而是注册 hook 的那个叶子张量。可以通过 `param.grad` 读取已经累积好的梯度。这个 hook 只适用于叶子张量，例如 `nn.Parameter` 或直接设置 `requires_grad=True` 的张量；注册到非叶子张量会报错。
-
-示例：在梯度累积后执行一次简化版 SGD 更新。
-
-```python
-import torch
-
-
-w = torch.tensor([1.0, -2.0], requires_grad=True)
-lr = 0.1
-
-
-def sgd_step(param):
-    print("grad:", param.grad)  # tensor([ 2., -4.])
-    param.add_(param.grad, alpha=-lr)
-
-
-handle = w.register_post_accumulate_grad_hook(sgd_step)
-
-loss = (w ** 2).sum()
-loss.backward()
-
-print(w)  # tensor([ 0.8000, -1.6000], requires_grad=True)
-
-handle.remove()
-```
-
-这里 `loss = w[0]^2 + w[1]^2`，所以梯度是 `[2, -4]`。hook 在 `.grad` 累积后执行，用 `w = w - lr * grad` 完成了一步参数更新。
-
-使用建议：
-
-- 常规训练仍然优先使用 `torch.optim`，不要为了普通参数更新专门写这个 hook。
-- 这个 hook 只适合叶子张量；中间计算得到的非叶子张量应使用 `Tensor.register_hook`。
-- 如果只是记录梯度，避免在 hook 中修改参数。
-
-## register_backward_hook
-
-`register_backward_hook` 是旧版 `nn.Module` 反向 hook。它在很多旧教程中出现过，但现在不建议新代码继续使用。
-
-原因是：旧接口在复杂计算图、多输出模块、嵌套模块等情况下行为不够清晰。新代码应使用 `register_full_backward_hook` 或 `register_full_backward_pre_hook`，它们对触发时机和梯度含义定义得更明确。
-
-旧写法：
-
-```python
-# 不建议新代码继续使用
-handle = module.register_backward_hook(hook_fn)
-```
-
-推荐替代写法：
-
-```python
-handle = module.register_full_backward_hook(hook_fn)
-```
-
-如果只是想在反向传播后保存某层输出端梯度，通常可以这样写：
-
-```python
-gradients = {}
-
-
-def save_gradient(module, grad_input, grad_output):
-    gradients["target"] = grad_output[0].detach()
-
-
-handle = module.register_full_backward_hook(save_gradient)
-```
-
-学习旧代码时看到 `register_backward_hook`，应优先把它理解为“旧版模块反向 hook”，再检查是否可以替换成 `register_full_backward_hook`。
-
 ## 易错点
 
 ### 忘记移除 hook
@@ -613,20 +454,20 @@ features["layer"] = output.detach()
 
 - 想拿卷积层输出特征图：用 `conv.register_forward_hook`。
 - 想拿某个中间张量 `y` 的梯度：用 `y.register_hook`。
-- 想拿某个参数最终累积到 `.grad` 的值：用 `param.register_post_accumulate_grad_hook`。
+- 想拿某层反向传播时的输入梯度和输出梯度：用 `module.register_full_backward_hook`。
+
+### 不要把旧接口当作新写法
+
+旧教程里可能会出现 `module.register_backward_hook`。新代码不建议继续使用这个接口；如果需要模块级反向 hook，优先使用 `module.register_full_backward_hook`。
 
 ## 小结
 
-Hook 是 PyTorch 中非常实用的调试和分析机制。它的核心不是“新增一层网络”，而是在已有计算流程中的某个时机插入一段回调逻辑。
+常用 hook 可以按一次训练迭代中的位置来记：
 
-选择 hook 时，可以按以下顺序判断：
-
-- 需要在 `forward` 前处理输入：用 `register_forward_pre_hook`。
-- 需要在 `forward` 后保存输出：用 `register_forward_hook`。
-- 需要在反向传播前观察或修改输出梯度：用 `register_full_backward_pre_hook`。
-- 需要在反向传播后观察输入梯度和输出梯度：用 `register_full_backward_hook`。
-- 需要观察某个张量自己的梯度：用 `Tensor.register_hook`。
-- 需要在叶子张量 `.grad` 累积完成后处理参数梯度：用 `Tensor.register_post_accumulate_grad_hook`。
+- `register_forward_pre_hook`：在某个模块 `forward` 前触发，适合检查或调整输入。
+- `register_forward_hook`：在某个模块 `forward` 后触发，适合保存输出特征。
+- `Tensor.register_hook`：在某个张量梯度被计算时触发，适合保存或替换张量梯度。
+- `register_full_backward_hook`：在某个模块反向梯度计算后触发，适合保存 `grad_input` 和 `grad_output`。
 
 实践中最常见的组合是：用 `forward_hook` 保存中间特征，用 `full_backward_hook` 保存对应梯度。这是模型可视化、特征分析和 Grad-CAM 的基础写法。
 
@@ -634,4 +475,3 @@ Hook 是 PyTorch 中非常实用的调试和分析机制。它的核心不是“
 
 - [PyTorch `nn.Module` hook API](https://docs.pytorch.org/docs/2.12/generated/torch.nn.Module.html)
 - [PyTorch `Tensor.register_hook`](https://docs.pytorch.org/docs/2.12/generated/torch.Tensor.register_hook.html)
-- [PyTorch `Tensor.register_post_accumulate_grad_hook`](https://docs.pytorch.org/docs/2.12/generated/torch.Tensor.register_post_accumulate_grad_hook.html)
