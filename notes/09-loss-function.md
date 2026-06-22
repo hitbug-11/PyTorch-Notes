@@ -317,7 +317,7 @@ p_\theta(y_i = c \mid x_i)
 \frac{\exp(z_{i,c})}{\sum_{j=1}^{C}\exp(z_{i,j})}
 $$
 
-更一般地，交叉熵衡量的是目标分布 $q_i$ 和模型预测分布 $p_i$ 之间的差距。对第 $i$ 个样本，若目标分布为：
+交叉熵的通用形式，是衡量目标分布 $q_i$ 和模型预测分布 $p_i$ 之间的差距。对第 $i$ 个样本，若目标分布为：
 
 $$
 q_i = [q_{i,1}, q_{i,2}, \ldots, q_{i,C}]
@@ -337,67 +337,40 @@ $$
 -\sum_{c=1}^{C} q_{i,c} \log p_{i,c}
 $$
 
-如果目标是普通分类任务中的 hard label，那么真实类别 $y_i$ 可以写成 one-hot 分布：
-
-$$
-q_{i,c}
-=
-\begin{cases}
-1, & c = y_i \\
-0, & c \ne y_i
-\end{cases}
-$$
-
-代入交叉熵公式后，只有真实类别对应的那一项会保留下来：
-
-$$
-\mathrm{CE}(q_i, p_i)
-=
--\log p_{i,y_i}
-$$
-
-再把 softmax 概率代入：
-
-$$
--\log p_{i,y_i}
-=
--\log
-\left[
-\frac{\exp(z_{i,y_i})}{\sum_{j=1}^{C}\exp(z_{i,j})}
-\right]
-$$
-
-因此，对 hard label 分类任务，整份数据上的交叉熵目标常写成：
+对整份训练集，交叉熵损失可以写成：
 
 $$
 \mathrm{Loss}
 =
 -\sum_{i=1}^{N}
+\sum_{c=1}^{C} q_{i,c} \log p_{i,c}
+$$
+
+把 softmax 概率代入 $p_{i,c}$，得到：
+
+$$
+\mathrm{Loss}
+=
+-\sum_{i=1}^{N}
+\sum_{c=1}^{C}
+q_{i,c}
 \log
-\left[
-\frac{\exp(z_{i,y_i})}{\sum_{j=1}^{C}\exp(z_{i,j})}
-\right]
+\frac{\exp(z_{i,c})}{\sum_{j=1}^{C}\exp(z_{i,j})}
 $$
 
-这个式子不是交叉熵最一般的定义，而是目标分布为 one-hot 时的简化形式。它的含义是：如果模型给真实类别的概率越大，$-\log p_{i,y_i}$ 越小；如果模型给真实类别的概率越接近 0，loss 会迅速变大。
-
-从极大似然估计角度看，categorical distribution 的似然也可以写成：
+从极大似然估计角度看，最小化交叉熵就是最大化目标分布加权后的对数似然：
 
 $$
-L(\theta)
-=
-\prod_{i=1}^{N}\prod_{c=1}^{C} p_{i,c}^{q_{i,c}}
-$$
-
-取负对数似然：
-
-$$
--\log L(\theta)
-=
+\arg\min_{\theta}
+\left(
 -\sum_{i=1}^{N}\sum_{c=1}^{C} q_{i,c}\log p_{i,c}
+\right)
+=
+\arg\max_{\theta}
+\sum_{i=1}^{N}\sum_{c=1}^{C} q_{i,c}\log p_{i,c}
 $$
 
-这正是对所有样本求和后的交叉熵。因此，最大化 categorical likelihood 等价于最小化 cross entropy。对于 hard label，$q_i$ 是 one-hot 分布，上式就会退化成 $-\sum_i \log p_{i,y_i}$。
+也就是说，交叉熵不是单纯看预测类别是否正确，而是直接惩罚模型给目标分布中高概率类别分配过低概率。目标分布 $q_i$ 和预测分布 $p_i$ 越接近，交叉熵越小。
 
 在 PyTorch 中，当 `target` 是类别索引时，`CrossEntropyLoss` 等价于把 `LogSoftmax` 和 `NLLLoss` 组合在一起：
 
