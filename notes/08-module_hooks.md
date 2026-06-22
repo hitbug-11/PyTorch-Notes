@@ -1,4 +1,4 @@
-# 08-hooks
+# 08-module_hooks
 
 本篇整理 PyTorch 中常用的 hook 机制，按“Hook 概念 -> Hook 应用位置图 -> 常用 Hook 对比 -> register_forward_pre_hook -> register_forward_hook -> Tensor.register_hook -> register_full_backward_hook -> 易错点 -> 小结”的顺序组织。阅读时可以先看流程图明确各类 hook 在计算流程中的位置，再按流程图从上到下理解每种 hook 的作用、用法和示例。
 
