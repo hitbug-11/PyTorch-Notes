@@ -16,15 +16,11 @@ Loss function 用来衡量模型输出和真实标签之间的差距。训练神
 
 常见训练流程可以概括为：
 
-```text
-输入 x -> 模型 f_theta(x) -> 预测结果 -> loss function -> loss
-                                                     |
-                                                     v
-                                           backward 计算梯度
-                                                     |
-                                                     v
-                                           optimizer 更新参数
-```
+1. 输入 $x$。
+2. 模型 $f_\theta(x)$ 得到预测结果。
+3. loss function 根据预测结果和真实标签计算 loss。
+4. `backward` 计算梯度。
+5. `optimizer` 根据梯度更新参数。
 
 本篇先只关注两类最基础任务：
 
@@ -41,34 +37,35 @@ Loss function 用来衡量模型输出和真实标签之间的差距。训练神
 
 假设训练集为：
 
-```text
-D = {(x_1, y_1), (x_2, y_2), ..., (x_N, y_N)}
-```
+$$
+D = \{(x_1, y_1), (x_2, y_2), \ldots, (x_N, y_N)\}
+$$
 
-模型参数为 `theta`。如果样本之间独立，则整份训练数据的似然函数可以写成：
+模型参数为 $\theta$。如果样本之间独立，则整份训练数据的似然函数可以写成：
 
-```text
-L(theta) = product_i p(y_i | x_i; theta)
-```
+$$
+L(\theta) = \prod_{i=1}^{N} p(y_i \mid x_i; \theta)
+$$
 
 MLE 的目标是：
 
-```text
-theta_hat = argmax_theta L(theta)
-```
+$$
+\hat{\theta} = \arg\max_{\theta} L(\theta)
+$$
 
 由于连乘容易数值下溢，也不方便求导，通常会对似然取对数：
 
-```text
-log L(theta) = sum_i log p(y_i | x_i; theta)
-```
+$$
+\log L(\theta) = \sum_{i=1}^{N} \log p(y_i \mid x_i; \theta)
+$$
 
 最大化对数似然等价于最小化负对数似然：
 
-```text
-argmax_theta sum_i log p(y_i | x_i; theta)
-= argmin_theta -sum_i log p(y_i | x_i; theta)
-```
+$$
+\arg\max_{\theta} \sum_{i=1}^{N} \log p(y_i \mid x_i; \theta)
+=
+\arg\min_{\theta} -\sum_{i=1}^{N} \log p(y_i \mid x_i; \theta)
+$$
 
 很多深度学习 loss 的统计来源就是负对数似然。也就是说，loss function 并不只是随意定义的误差公式，它经常对应一个概率建模假设。
 
@@ -76,8 +73,8 @@ argmax_theta sum_i log p(y_i | x_i; theta)
 
 在概率论与数理统计课中，MLE 常见做法是：
 
-1. 写出似然函数 `L(theta)` 或对数似然函数 `log L(theta)`。
-2. 对参数 `theta` 求导。
+1. 写出似然函数 $L(\theta)$ 或对数似然函数 $\log L(\theta)$。
+2. 对参数 $\theta$ 求导。
 3. 令导数等于 0。
 4. 解方程得到参数的解析解。
 
@@ -115,21 +112,23 @@ optimizer.step()
 
 对单个样本，模型预测为：
 
-```text
-y_hat_i = f_theta(x_i)
-```
+$$
+\hat{y}_i = f_\theta(x_i)
+$$
 
-真实值为 `y_i`，平方误差为：
+真实值为 $y_i$，平方误差为：
 
-```text
-(y_i - y_hat_i)^2
-```
+$$
+(y_i - \hat{y}_i)^2
+$$
 
 对整个 batch 或训练集求平均，就得到均方误差：
 
-```text
-MSE = 1 / N * sum_i (y_i - f_theta(x_i))^2
-```
+$$
+\mathrm{MSE}
+=
+\frac{1}{N} \sum_{i=1}^{N} (y_i - f_\theta(x_i))^2
+$$
 
 平方误差的特点是：误差越大，惩罚增长越快。因此 MSE 会更重视较大的预测偏差。
 
@@ -139,75 +138,87 @@ MSE 可以从高斯噪声假设下的极大似然估计推导出来。
 
 假设回归目标满足：
 
-```text
-y_i = f_theta(x_i) + epsilon_i
-```
+$$
+y_i = f_\theta(x_i) + \varepsilon_i
+$$
 
-其中 `f_theta(x_i)` 是模型预测值，`epsilon_i` 是观测噪声。进一步假设噪声独立同分布，并且服从均值为 0、方差为 `sigma^2` 的高斯分布：
+其中 $f_\theta(x_i)$ 是模型预测值，$\varepsilon_i$ 是观测噪声。进一步假设噪声独立同分布，并且服从均值为 0、方差为 $\sigma^2$ 的高斯分布：
 
-```text
-epsilon_i ~ N(0, sigma^2)
-```
+$$
+\varepsilon_i \sim \mathcal{N}(0, \sigma^2)
+$$
 
-那么在给定输入 `x_i` 和参数 `theta` 时，目标值 `y_i` 的条件分布为：
+那么在给定输入 $x_i$ 和参数 $\theta$ 时，目标值 $y_i$ 的条件分布为：
 
-```text
-y_i | x_i; theta ~ N(f_theta(x_i), sigma^2)
-```
+$$
+y_i \mid x_i; \theta \sim \mathcal{N}(f_\theta(x_i), \sigma^2)
+$$
 
 对应的条件概率密度为：
 
-```text
-p(y_i | x_i; theta)
-= 1 / sqrt(2 pi sigma^2)
-  * exp(-(y_i - f_theta(x_i))^2 / (2 sigma^2))
-```
+$$
+p(y_i \mid x_i; \theta)
+=
+\frac{1}{\sqrt{2\pi\sigma^2}}
+\exp \left(
+-\frac{(y_i - f_\theta(x_i))^2}{2\sigma^2}
+\right)
+$$
 
 如果样本独立，则整份数据的似然为：
 
-```text
-L(theta)
-= product_i p(y_i | x_i; theta)
-```
+$$
+L(\theta)
+=
+\prod_{i=1}^{N} p(y_i \mid x_i; \theta)
+$$
 
 取对数：
 
-```text
-log L(theta)
-= sum_i log p(y_i | x_i; theta)
-```
+$$
+\log L(\theta)
+=
+\sum_{i=1}^{N} \log p(y_i \mid x_i; \theta)
+$$
 
 代入高斯密度：
 
-```text
-log L(theta)
-= sum_i [
-    -1 / 2 * log(2 pi sigma^2)
-    - (y_i - f_theta(x_i))^2 / (2 sigma^2)
-]
-```
+$$
+\log L(\theta)
+=
+\sum_{i=1}^{N}
+\left[
+-\frac{1}{2}\log(2\pi\sigma^2)
+-
+\frac{(y_i - f_\theta(x_i))^2}{2\sigma^2}
+\right]
+$$
 
 取负对数似然：
 
-```text
--log L(theta)
-= sum_i [
-    1 / 2 * log(2 pi sigma^2)
-    + (y_i - f_theta(x_i))^2 / (2 sigma^2)
-]
-```
+$$
+-\log L(\theta)
+=
+\sum_{i=1}^{N}
+\left[
+\frac{1}{2}\log(2\pi\sigma^2)
++
+\frac{(y_i - f_\theta(x_i))^2}{2\sigma^2}
+\right]
+$$
 
-如果 `sigma^2` 被看作固定常数，那么下面两项不会改变最优的 `theta`：
+如果 $\sigma^2$ 被看作固定常数，那么下面两项不会改变最优的 $\theta$：
 
-- `1 / 2 * log(2 pi sigma^2)` 是常数项。
-- `1 / (2 sigma^2)` 只是平方误差前的正比例系数。
+- $\frac{1}{2}\log(2\pi\sigma^2)$ 是常数项。
+- $\frac{1}{2\sigma^2}$ 只是平方误差前的正比例系数。
 
 因此：
 
-```text
-argmin_theta -log L(theta)
-= argmin_theta sum_i (y_i - f_theta(x_i))^2
-```
+$$
+\arg\min_{\theta} -\log L(\theta)
+=
+\arg\min_{\theta} \sum_{i=1}^{N} (y_i - f_\theta(x_i))^2
+$$
 
 这说明：在“观测误差服从独立同分布高斯噪声”的假设下，最大化似然等价于最小化平方误差。PyTorch 中的 `MSELoss` 就是这一思想在回归任务中的常见实现。
 
@@ -274,89 +285,100 @@ print(loss.item())
 
 `CrossEntropyLoss` 是多分类任务中最常用的损失函数。它衡量模型预测的类别概率分布与真实类别之间的差距。
 
-在分类任务中，模型通常不会直接输出概率，而是输出每个类别对应的 raw score，这些值称为 logits。假设一个样本有 `C` 个类别，模型输出为：
+在分类任务中，模型通常不会直接输出概率，而是输出每个类别对应的 raw score，这些值称为 logits。假设一个样本有 $C$ 个类别，模型输出为：
 
-```text
-z_i = [z_{i,1}, z_{i,2}, ..., z_{i,C}]
-```
+$$
+z_i = [z_{i,1}, z_{i,2}, \ldots, z_{i,C}]
+$$
 
 通过 softmax 可以把 logits 转换成概率分布：
 
-```text
-p_theta(y_i = c | x_i)
-= exp(z_{i,c}) / sum_j exp(z_{i,j})
-```
+$$
+p_\theta(y_i = c \mid x_i)
+=
+\frac{\exp(z_{i,c})}{\sum_{j=1}^{C}\exp(z_{i,j})}
+$$
 
-如果真实类别是 `y_i`，那么我们希望模型分配给真实类别的概率越大越好。
+如果真实类别是 $y_i$，那么我们希望模型分配给真实类别的概率越大越好。
 
 ### 和极大似然估计的关系
 
-对多分类问题，标签 `y_i` 来自类别集合：
+对多分类问题，标签 $y_i$ 来自类别集合：
 
-```text
-{1, 2, ..., C}
-```
+$$
+\{1, 2, \ldots, C\}
+$$
 
 可以把标签看作服从 categorical distribution。模型给出的 softmax 概率就是每个类别在当前输入下出现的条件概率：
 
-```text
-p_theta(y_i = c | x_i)
-= exp(z_{i,c}) / sum_j exp(z_{i,j})
-```
+$$
+p_\theta(y_i = c \mid x_i)
+=
+\frac{\exp(z_{i,c})}{\sum_{j=1}^{C}\exp(z_{i,j})}
+$$
 
-对真实类别 `y_i`，单个样本的似然为：
+对真实类别 $y_i$，单个样本的似然为：
 
-```text
-p_theta(y_i | x_i)
-```
+$$
+p_\theta(y_i \mid x_i)
+$$
 
 整份数据的似然为：
 
-```text
-L(theta)
-= product_i p_theta(y_i | x_i)
-```
+$$
+L(\theta)
+=
+\prod_{i=1}^{N} p_\theta(y_i \mid x_i)
+$$
 
 最大化似然等价于最大化对数似然：
 
-```text
-log L(theta)
-= sum_i log p_theta(y_i | x_i)
-```
+$$
+\log L(\theta)
+=
+\sum_{i=1}^{N} \log p_\theta(y_i \mid x_i)
+$$
 
 也等价于最小化负对数似然：
 
-```text
--log L(theta)
-= -sum_i log p_theta(y_i | x_i)
-```
+$$
+-\log L(\theta)
+=
+-\sum_{i=1}^{N} \log p_\theta(y_i \mid x_i)
+$$
 
 把 softmax 概率代入真实类别项：
 
-```text
--log p_theta(y_i | x_i)
-= -log [
-    exp(z_{i,y_i}) / sum_j exp(z_{i,j})
-]
-```
+$$
+-\log p_\theta(y_i \mid x_i)
+=
+-\log
+\left[
+\frac{\exp(z_{i,y_i})}{\sum_{j=1}^{C}\exp(z_{i,j})}
+\right]
+$$
 
 因此全数据目标为：
 
-```text
-Loss
-= -sum_i log [
-    exp(z_{i,y_i}) / sum_j exp(z_{i,j})
-]
-```
+$$
+\mathrm{Loss}
+=
+-\sum_{i=1}^{N}
+\log
+\left[
+\frac{\exp(z_{i,y_i})}{\sum_{j=1}^{C}\exp(z_{i,j})}
+\right]
+$$
 
-这就是多分类交叉熵损失。它的含义是：如果模型给真实类别的概率越大，`-log p_theta(y_i | x_i)` 越小；如果模型给真实类别的概率越接近 0，loss 会迅速变大。
+这就是多分类交叉熵损失。它的含义是：如果模型给真实类别的概率越大，$-\log p_\theta(y_i \mid x_i)$ 越小；如果模型给真实类别的概率越接近 0，loss 会迅速变大。
 
 在 PyTorch 中，`CrossEntropyLoss` 等价于把 `LogSoftmax` 和 `NLLLoss` 组合在一起：
 
-```text
-CrossEntropyLoss(logits, target)
-= NLLLoss(LogSoftmax(logits), target)
-```
+$$
+\mathrm{CrossEntropyLoss}(\mathrm{logits}, \mathrm{target})
+=
+\mathrm{NLLLoss}(\mathrm{LogSoftmax}(\mathrm{logits}), \mathrm{target})
+$$
 
 因此使用 `nn.CrossEntropyLoss` 时，输入应直接传 logits，不需要手动先做 `softmax`。
 
