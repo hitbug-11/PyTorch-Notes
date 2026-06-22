@@ -303,74 +303,68 @@ $$
 
 ### 和极大似然估计的关系
 
-对多分类问题，标签 $y_i$ 来自类别集合：
+对多分类问题，假设有 $C$ 个类别，真实标签写成 one-hot 向量：
 
 $$
-\{1, 2, \ldots, C\}
+y_i = [y_{i,1}, y_{i,2}, \ldots, y_{i,C}]
 $$
 
-可以把标签看作服从 categorical distribution。模型给出的 softmax 概率就是每个类别在当前输入下出现的条件概率：
+模型预测为 softmax 输出的概率分布：
 
 $$
-p_\theta(y_i = c \mid x_i)
+\hat{y}_i = [\hat{y}_{i,1}, \hat{y}_{i,2}, \ldots, \hat{y}_{i,C}]
+$$
+
+其中：
+
+$$
+\hat{y}_{i,c}
 =
 \frac{\exp(z_{i,c})}{\sum_{j=1}^{C}\exp(z_{i,j})}
 $$
 
-交叉熵的通用形式，是衡量目标分布 $q_i$ 和模型预测分布 $p_i$ 之间的差距。对第 $i$ 个样本，若目标分布为：
+因为 one-hot 标签只有真实类别对应的位置为 1，其余位置为 0，所以单个样本的似然可以写成：
 
 $$
-q_i = [q_{i,1}, q_{i,2}, \ldots, q_{i,C}]
-$$
-
-模型预测分布为：
-
-$$
-p_i = [p_{i,1}, p_{i,2}, \ldots, p_{i,C}]
-$$
-
-则单个样本的交叉熵为：
-
-$$
-\mathrm{CE}(q_i, p_i)
+P(y_i \mid x_i)
 =
--\sum_{c=1}^{C} q_{i,c} \log p_{i,c}
+\prod_{c=1}^{C} (\hat{y}_{i,c})^{y_{i,c}}
 $$
 
-对整份训练集，交叉熵损失可以写成：
+这个连乘最后只会留下真实类别对应的预测概率。例如真实类别是第 $t$ 类，那么只有 $y_{i,t}=1$，其余 $y_{i,c}=0$，所以：
+
+$$
+P(y_i \mid x_i) = \hat{y}_{i,t}
+$$
+
+极大似然估计的目标，是让所有样本真实类别对应的预测概率尽可能大。因为连乘不好求导，也容易造成数值下溢，所以通常取对数，并把最大化对数似然改写成最小化负对数似然：
+
+$$
+-\log P(y_i \mid x_i)
+=
+-\log
+\left[
+\prod_{c=1}^{C} (\hat{y}_{i,c})^{y_{i,c}}
+\right]
+$$
+
+利用对数性质 $\log(a^b)=b\log a$，得到：
+
+$$
+-\log P(y_i \mid x_i)
+=
+-\sum_{c=1}^{C} y_{i,c}\log(\hat{y}_{i,c})
+$$
+
+这就是单个样本的交叉熵损失。对整份训练集求和或求平均，就得到训练时使用的 Cross Entropy Loss：
 
 $$
 \mathrm{Loss}
 =
--\sum_{i=1}^{N}
-\sum_{c=1}^{C} q_{i,c} \log p_{i,c}
+-\sum_{i=1}^{N}\sum_{c=1}^{C} y_{i,c}\log(\hat{y}_{i,c})
 $$
 
-把 softmax 概率代入 $p_{i,c}$，得到：
-
-$$
-\mathrm{Loss}
-=
--\sum_{i=1}^{N}
-\sum_{c=1}^{C}
-q_{i,c}
-\log
-\frac{\exp(z_{i,c})}{\sum_{j=1}^{C}\exp(z_{i,j})}
-$$
-
-从极大似然估计角度看，最小化交叉熵就是最大化目标分布加权后的对数似然：
-
-$$
-\arg\min_{\theta}
-\left(
--\sum_{i=1}^{N}\sum_{c=1}^{C} q_{i,c}\log p_{i,c}
-\right)
-=
-\arg\max_{\theta}
-\sum_{i=1}^{N}\sum_{c=1}^{C} q_{i,c}\log p_{i,c}
-$$
-
-也就是说，交叉熵不是单纯看预测类别是否正确，而是直接惩罚模型给目标分布中高概率类别分配过低概率。目标分布 $q_i$ 和预测分布 $p_i$ 越接近，交叉熵越小。
+因此，交叉熵和极大似然估计的关系是：最大化模型对真实类别的预测概率，等价于最小化真实标签分布和模型预测分布之间的负对数似然，也就是交叉熵损失。
 
 在 PyTorch 中，当 `target` 是类别索引时，`CrossEntropyLoss` 等价于把 `LogSoftmax` 和 `NLLLoss` 组合在一起：
 
