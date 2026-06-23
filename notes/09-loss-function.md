@@ -1,14 +1,105 @@
 # 09-loss_function
 
-本篇整理深度学习中最基础的两类损失函数，按“Loss Function 总览 -> 极大似然估计与深度学习参数更新 -> MSELoss -> CrossEntropyLoss -> 小结”的顺序组织。阅读时可以先理解 loss function 和极大似然估计的关系，再分别掌握回归任务中的均方误差和分类任务中的交叉熵。
+本篇整理深度学习中最基础的两类损失函数，按“Loss Function 在 nn.Module 中的位置 -> Loss Function 总览 -> 极大似然估计与深度学习参数更新 -> MSELoss -> CrossEntropyLoss -> 小结”的顺序组织。阅读时可以先理解 loss function 在 PyTorch 模块体系中的位置，再理解 loss function 和极大似然估计的关系，最后分别掌握回归任务中的均方误差和分类任务中的交叉熵。
 
 速查目录：
 
+- `Loss Function 在 nn.Module 中的位置`：说明 loss class 与 `nn.Module`、`_Loss` 的继承关系，以及自定义 loss class 需要实现的基本代码框架。
 - `Loss Function 总览`：说明 loss function 的作用，并区分 regression 和 classification 两类基础任务。
 - `极大似然估计与深度学习参数更新`：说明为什么很多 loss 可以从极大似然估计角度理解，以及深度学习为什么通常使用梯度下降类方法更新参数。
 - `MSELoss`：介绍回归问题中的均方误差，推导它和高斯噪声假设下极大似然估计的关系，并说明 PyTorch 用法。
 - `CrossEntropyLoss`：介绍分类问题中的交叉熵，推导它和多分类负对数似然的关系，并说明 PyTorch 用法。
 - `小结`：归纳 MSE 和 Cross Entropy 的适用任务、统计假设和常见易错点。
+
+## Loss Function 在 nn.Module 中的位置
+
+PyTorch 中常用的 loss function 不是普通函数，而是 `nn.Module` 体系下的模块。它们可以像普通网络层一样先实例化，再在训练循环中调用。
+
+```python
+criterion = nn.CrossEntropyLoss()
+loss = criterion(logits, target)
+```
+
+调用 `criterion(logits, target)` 时，实际会走 `nn.Module.__call__`，再进入 loss class 自己实现的 `forward` 方法。也就是说，loss function 和 `Linear`、`Conv2d` 这类 layer 一样，核心计算逻辑都写在 `forward` 中。
+
+常见继承关系可以简化理解为：
+
+```mermaid
+flowchart TD
+    A["nn.Module<br/>所有 PyTorch 模块的父类"] --> B["_Loss<br/>loss function 的基础父类"]
+    B --> C["MSELoss<br/>回归：均方误差"]
+    B --> D["_WeightedLoss<br/>带类别权重的 loss 父类"]
+    D --> E["CrossEntropyLoss<br/>分类：交叉熵"]
+
+    A --> F["自定义 Loss<br/>通常直接继承 nn.Module"]
+
+    classDef base fill:#e8f3ff,stroke:#2b6cb0,color:#1a365d;
+    classDef loss fill:#fff4e6,stroke:#c05621,color:#7b341e;
+    classDef custom fill:#f7fafc,stroke:#718096,color:#2d3748;
+
+    class A,B,D base;
+    class C,E loss;
+    class F custom;
+```
+
+这里需要注意：
+
+- `nn.Module` 是所有模型、网络层和 loss class 的共同父类。
+- `_Loss` 是 PyTorch 内部给 loss function 使用的基础类，主要处理 `reduction` 这类通用配置。
+- `_WeightedLoss` 继承自 `_Loss`，用于带权重的 loss，例如分类任务中可以给不同类别设置不同权重。
+- 自己写 loss function 时，通常直接继承 `nn.Module` 就够了，不需要特意继承 `_Loss`。`_Loss` 前面有下划线，表示它更偏内部实现细节。
+
+设计一个 loss class 时，最重要的是两个方法：
+
+| 方法 | 作用 | 常见内容 |
+| --- | --- | --- |
+| `__init__` | 初始化 loss 模块 | 保存超参数、设置 `reduction`、注册权重或其他配置。 |
+| `forward` | 定义 loss 计算逻辑 | 接收模型输出和真实标签，用 PyTorch 张量运算计算 loss，并返回标量或逐样本 loss。 |
+
+一个自定义 loss class 的基本框架如下：
+
+```python
+import torch
+import torch.nn as nn
+
+
+class MyLoss(nn.Module):
+    def __init__(self, reduction="mean"):
+        super().__init__()
+        self.reduction = reduction
+
+    def forward(self, input, target):
+        # input: 模型输出
+        # target: 真实标签
+        loss = (input - target) ** 2
+
+        if self.reduction == "mean":
+            return loss.mean()
+        if self.reduction == "sum":
+            return loss.sum()
+        if self.reduction == "none":
+            return loss
+
+        raise ValueError(f"Unsupported reduction: {self.reduction}")
+```
+
+使用方式和 PyTorch 内置 loss 一样：
+
+```python
+criterion = MyLoss(reduction="mean")
+loss = criterion(pred, target)
+
+optimizer.zero_grad()
+loss.backward()
+optimizer.step()
+```
+
+写自定义 loss 时要注意：
+
+- `forward` 中应尽量使用 PyTorch 张量操作，这样 autograd 才能自动追踪计算图。
+- 不要在 loss 计算过程中随意调用 `.detach()`、`.item()` 或转成 NumPy，否则可能切断梯度。
+- 如果 loss 要参与训练，返回值通常应是一个 Tensor，而不是 Python 数值。
+- 如果希望和 PyTorch 内置 loss 风格一致，可以支持 `reduction="mean"`、`"sum"`、`"none"`。
 
 ## Loss Function 总览
 
